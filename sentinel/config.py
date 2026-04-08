@@ -29,6 +29,8 @@ class Config:
     filestorage_path: str
     token: str | None
     web3_socket_provider: str
+    healthcheck_host: str
+    healthcheck_port: int
 
     # Addresses and IDs
     module_address: ChecksumAddress
@@ -72,10 +74,27 @@ RPC_DISCOVERY_TIMEOUT_SECONDS = 30
 RPC_DISCOVERY_RETRY_DELAY_SECONDS = 10
 
 
+def _parse_healthcheck_port(raw: str | None) -> int:
+    if not raw:
+        return 8080
+    port = int(raw)
+    if port <= 0 or port > 65535:
+        raise RuntimeError("HEALTHCHECK_PORT must be between 1 and 65535")
+    return port
+
+
+def get_healthcheck_bind_from_env() -> tuple[str, int]:
+    return (
+        os.getenv("HEALTHCHECK_HOST", "0.0.0.0"),
+        _parse_healthcheck_port(os.getenv("HEALTHCHECK_PORT")),
+    )
+
+
 async def _build_config_from_env() -> Config:
     filestorage_path = os.getenv("FILESTORAGE_PATH", ".storage")
     token = os.getenv("TOKEN")
     web3_socket_provider = os.getenv("WEB3_SOCKET_PROVIDER")
+    healthcheck_host, healthcheck_port = get_healthcheck_bind_from_env()
     raw_module_address = os.getenv("MODULE_ADDRESS")
     raw_csm_address = os.getenv("CSM_ADDRESS")
     if raw_csm_address:
@@ -113,6 +132,8 @@ async def _build_config_from_env() -> Config:
         filestorage_path=filestorage_path,
         token=token,
         web3_socket_provider=web3_socket_provider,
+        healthcheck_host=healthcheck_host,
+        healthcheck_port=healthcheck_port,
         module_address=addresses.module,
         accounting_address=addresses.accounting,
         parameters_registry_address=addresses.parameters_registry,

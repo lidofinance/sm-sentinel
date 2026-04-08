@@ -45,6 +45,7 @@ class JobContext:
                 context.bot_storage.block.update(
                     max(context.bot_storage.block.value, self._chain_head)
                 )
+                context.runtime.health.mark_progress()
             logger.debug("Polled chain head: %s", self._chain_head)
         except Exception as exc:
             logger.warning("Failed to poll chain head: %s", exc)

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from sentinel.config import clear_config, get_config_async
+from sentinel.config import clear_config, get_config_async, get_healthcheck_bind_from_env
 from sentinel.module_types import ModuleType
 
 
@@ -65,3 +65,26 @@ async def test_get_config_async_falls_back_to_csm_ui(monkeypatch, stub_discover_
 
     assert cfg.module_ui_url == "https://legacy.example"
     clear_config()
+
+
+@pytest.mark.asyncio
+async def test_get_config_async_reads_healthcheck_envs(monkeypatch, stub_discover_contract_addresses):
+    clear_config()
+
+    monkeypatch.setenv("WEB3_SOCKET_PROVIDER", "wss://example.invalid/ws")
+    monkeypatch.setenv("MODULE_ADDRESS", "0x0000000000000000000000000000000000000001")
+    monkeypatch.setenv("HEALTHCHECK_HOST", "127.0.0.1")
+    monkeypatch.setenv("HEALTHCHECK_PORT", "18080")
+
+    cfg = await get_config_async()
+
+    assert cfg.healthcheck_host == "127.0.0.1"
+    assert cfg.healthcheck_port == 18080
+    clear_config()
+
+
+def test_get_healthcheck_bind_from_env_rejects_invalid_port(monkeypatch):
+    monkeypatch.setenv("HEALTHCHECK_PORT", "70000")
+
+    with pytest.raises(RuntimeError, match="HEALTHCHECK_PORT"):
+        get_healthcheck_bind_from_env()

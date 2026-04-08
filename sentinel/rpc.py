@@ -17,6 +17,7 @@ from web3._utils.events import get_event_data
 from web3.types import EventData, FilterParams
 from websockets import ConnectionClosed
 
+from sentinel.app.health import HealthState
 from sentinel.config import Config, get_config
 from sentinel.texts import EVENT_DESCRIPTIONS
 from sentinel.models import (
@@ -50,6 +51,7 @@ class Subscription:
         w3: AsyncWeb3,
         allowed_events: set[str],
         *,
+        health: HealthState,
         backfill_w3: AsyncWeb3 | None = None,
     ):
         super().__init__()
@@ -66,6 +68,7 @@ class Subscription:
             EXIT_PENALTIES_ABI,
         )
         self.cfg: Config = get_config()
+        self._health = health
         rps_limit = self.cfg.process_blocks_requests_per_second
         self._process_blocks_request_interval = (1 / rps_limit) if rps_limit else None
         self._last_process_blocks_request_ts: float | None = None
@@ -127,6 +130,7 @@ class Subscription:
         logger.info("Signal received, shutting down...")
         loop.create_task(_safe_unsubscribe_all())
         self._shutdown_event.set()
+        self._health.mark_subscription_inactive()
 
     @staticmethod
     def reconnect(func):
@@ -135,6 +139,7 @@ class Subscription:
                 try:
                     return await func(self, *args, **kwargs)
                 except ConnectionClosed:
+                    self._health.mark_subscription_inactive()
                     if self._shutdown_event.is_set():
                         break
                     logger.info("Web3 provider disconnected, reconnecting...")
@@ -194,6 +199,7 @@ class Subscription:
             )
             logger.info("Subscriptions started")
             self._subscriptions_started.set()
+            self._health.mark_subscription_active()
 
             await w3.subscription_manager.handle_subscriptions()
 
@@ -267,6 +273,7 @@ class Subscription:
             if self._shutdown_event.is_set():
                 break
             await self.process_new_block(Block(number=batch_end))
+            self._health.mark_progress()
             logger.debug("Processed blocks up to %s", batch_end)
         if self._shutdown_event.is_set():
             logger.warning("Backfill interrupted before reaching block %s", end_block)
@@ -376,6 +383,7 @@ class Subscription:
         )
         if hasattr(context, "predicate") and not context.predicate(event):
             return
+        self._health.mark_progress()
         await self.process_event_log_from_subscription(event)
 
     async def process_event_log(self, event: Event):
@@ -402,4 +410,4 @@ if __name__ == "__main__":
     provider = AsyncWeb3(WebSocketProvider(os.getenv("WEB3_SOCKET_PROVIDER")))
 
     allowed_events = set(EVENT_DESCRIPTIONS.keys())
-    asyncio.run(TerminalSubscription(provider, allowed_events).subscribe())
+    asyncio.run(TerminalSubscription(provider, allowed_events, health=HealthState()).subscribe())
