@@ -5,6 +5,7 @@ from telegram import LinkPreviewOptions
 from telegram.constants import ParseMode
 from telegram.ext import Application, TypeHandler
 
+from sentinel.app.health import HealthState
 from sentinel.models import Block, Event
 from sentinel.rpc import Subscription
 from sentinel.app.storage import BotStorage
@@ -26,9 +27,10 @@ class TelegramSubscription(Subscription):
         event_messages,
         allowed_events: set[str],
         *,
+        health: HealthState,
         backfill_w3=None,
     ) -> None:
-        super().__init__(w3, allowed_events, backfill_w3=backfill_w3)
+        super().__init__(w3, allowed_events, health=health, backfill_w3=backfill_w3)
         self.application = application
         self.event_messages = event_messages
         self._ignore_subscription_events_until_block: int | None = None

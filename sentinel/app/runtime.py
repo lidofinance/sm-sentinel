@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from telegram.ext import Application
 
     from sentinel.events import EventMessages
+    from sentinel.app.health import HealthServer, HealthState
     from sentinel.jobs import JobContext
     from sentinel.app.module_adapter import ModuleAdapter
     from sentinel.services.subscription import TelegramSubscription
@@ -25,6 +26,8 @@ class BotRuntime:
     event_messages: "EventMessages"
     job_context: "JobContext"
     module_adapter: "ModuleAdapter"
+    health: "HealthState"
+    health_server: "HealthServer"
 
 
 def attach_runtime(runtime: BotRuntime) -> None:
