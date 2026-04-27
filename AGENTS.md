@@ -72,6 +72,7 @@ This document captures practical conventions for working with this repo using ag
 ## Typing
 - Use built-in types for unions and generics: `str | None`, `set[int]` (Python ≥ 3.11).
 - Prefer precise types on public helpers; keep handlers small and focused.
+- Do not make constructor/runtime dependencies optional when they are guaranteed by construction. Pass required dependencies explicitly and let missing wiring fail early; reserve `| None` for real absence states and documented fallback behavior.
 - Skip `from __future__ import annotations`; the runtime is already Python 3.11, so use stringified forward refs when needed.
 
 ## Adding Events/ABIs

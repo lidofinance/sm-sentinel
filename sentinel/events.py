@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 DistributionLogFetcher = Callable[[str], Awaitable[dict | list]]
 MessageTemplate = Callable[..., str]
+CsmVersionSwitcher = Callable[[int], Awaitable[None]]
 
 
 @dataclass
@@ -97,20 +98,28 @@ class EventMessages:
         self,
         w3: AsyncWeb3,
         module_adapter: "ModuleAdapter",
+        csm_version_switcher: CsmVersionSwitcher,
         distribution_log_fetcher: "DistributionLogFetcher | None" = None,
     ):
         self.connectProvider = ConnectOnDemand(w3)
         self.w3 = w3
         self.module_adapter = module_adapter
+        self._csm_version_switcher = csm_version_switcher
         self._distribution_log_fetcher = distribution_log_fetcher or self._default_distribution_log_fetcher
 
         # Config snapshot
         self.cfg = get_config()
+        self.reconfigure(module_adapter)
+
+    def reconfigure(self, module_adapter: "ModuleAdapter") -> None:
+        """Update module-specific bindings after a runtime module version switch."""
+
         self.module_address = module_adapter.addresses.module
         self.accounting_address = module_adapter.addresses.accounting
         self.parameters_registry_address = module_adapter.addresses.parameters_registry
 
         # Contracts (module-specific adapter)
+        self.module_adapter = module_adapter
         self.module = module_adapter.contracts.module
         self.accounting = module_adapter.contracts.accounting
         self.parametersRegistry = module_adapter.contracts.parameters_registry
@@ -144,7 +153,7 @@ class EventMessages:
         return NotificationPlan(broadcast=EVENT_EMITS.format(event.event, event.args))
 
     async def get_notification_plan(self, event: Event):
-        if event.event not in self.module_adapter.allowed_events():
+        if event.event not in self.module_adapter.notifiable_events():
             return None
         async with self.connectProvider:
             result = await self.module_adapter.event_enricher(event, self)
@@ -223,6 +232,82 @@ class EventMessages:
             amount = 0
         return template(humanize_wei(amount)) + self.footer(event)
 
+    @RegisterEvent('GeneralDelayedPenaltyCancelled')
+    async def general_delayed_penalty_cancelled(self, event: Event):
+        template = self._require_message_template(event.event)
+        remaining_amount = humanize_wei(
+            await self.accounting.functions
+            .getActualLockedBond(event.args['nodeOperatorId'])
+            .call(block_identifier=event.block)
+        )
+        return template(remaining_amount) + self.footer(event)
+
+    @RegisterEvent('GeneralDelayedPenaltyCompensated')
+    async def general_delayed_penalty_compensated(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template(humanize_wei(event.args['amount'])) + self.footer(event)
+
+    @RegisterEvent('GeneralDelayedPenaltyReported')
+    async def general_delayed_penalty_reported(self, event: Event):
+        template = self._require_message_template(event.event)
+        return (
+            template(
+                humanize_wei(event.args['amount']),
+                humanize_wei(event.args['additionalFine']),
+                event.args['details'],
+            )
+            + self.footer(event)
+        )
+
+    @RegisterEvent('GeneralDelayedPenaltySettled')
+    async def general_delayed_penalty_settled(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template(humanize_wei(event.args['amount'])) + self.footer(event)
+
+    @RegisterEvent('ValidatorSlashingReported')
+    async def validator_slashing_reported(self, event: Event):
+        template = self._require_message_template(event.event)
+        key = self.w3.to_hex(event.args['pubkey'])
+        beacon_template = self._require_template(self.cfg.beaconchain_url_template, "BEACONCHAIN_URL")
+        key_url = beacon_template.format(key)
+        return template(key, key_url, event.args['keyIndex']) + self.footer(event)
+
+    @RegisterEvent('BondDebtIncreased')
+    async def bond_debt_increased(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template(humanize_wei(event.args['amount'])) + self.footer(event)
+
+    @RegisterEvent('BondDebtCovered')
+    async def bond_debt_covered(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template(humanize_wei(event.args['amount'])) + self.footer(event)
+
+    @RegisterEvent('CustomRewardsClaimerSet')
+    async def custom_rewards_claimer_set(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template(event.args['rewardsClaimer']) + self.footer(event)
+
+    @RegisterEvent('FeeSplitsSet')
+    async def fee_splits_set(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template(event.args['feeSplits']) + self.footer(event)
+
+    @RegisterEvent('ExpiredBondLockRemoved')
+    async def expired_bond_lock_removed(self, event: Event):
+        template = self._require_message_template(event.event)
+        return template() + self.footer(event)
+
+    @RegisterEvent('KeyAllocatedBalanceChanged')
+    async def key_allocated_balance_changed(self, event: Event):
+        template = self._require_message_template(event.event)
+        return (
+            template(
+                event.args['keyIndex'],
+                humanize_wei(event.args['newTotal']),
+            )
+            + self.footer(event)
+        )
+
     @RegisterEvent('BondCurveSet')
     async def bond_curve_set(self, event: Event):
         template = self._require_message_template(event.event)
@@ -277,6 +362,22 @@ class EventMessages:
         key_url = beacon_template.format(key)
         return template(key, key_url, humanize_wei(event.args['amount'])) + self.footer(event)
 
+    @RegisterEvent('ValidatorWithdrawn')
+    async def validator_withdrawn(self, event: Event):
+        template = self._require_message_template(event.event)
+        key = self.w3.to_hex(event.args['pubkey'])
+        beacon_template = self._require_template(self.cfg.beaconchain_url_template, "BEACONCHAIN_URL")
+        key_url = beacon_template.format(key)
+        return (
+            template(
+                key,
+                key_url,
+                humanize_wei(event.args['exitBalance']),
+                humanize_wei(event.args['slashingPenalty']),
+            )
+            + self.footer(event)
+        )
+
     @RegisterEvent('TotalSigningKeysCountChanged')
     async def total_signing_keys_count_changed(self, event: Event):
         template = self._require_message_template(event.event)
@@ -301,7 +402,12 @@ class EventMessages:
         key = self.w3.to_hex(event.args['pubkey'])
         beacon_template = self._require_template(self.cfg.beaconchain_url_template, "BEACONCHAIN_URL")
         key_url = beacon_template.format(key)
-        penalty = humanize_wei(event.args['delayPenalty'])
+        penalty_amount = (
+            event.args['delayPenalty']
+            if 'delayPenalty' in event.args
+            else event.args['delayFee']
+        )
+        penalty = humanize_wei(penalty_amount)
         return template(key, key_url, penalty) + self.footer(event)
 
     @RegisterEvent('TriggeredExitFeeRecorded')
@@ -400,9 +506,11 @@ class EventMessages:
     @RegisterEvent("Initialized")
     async def initialized(self, event: Event):
         template = self._require_message_template(event.event)
-        if event.args['version'] != 2:
+        if event.args['version'] != 3:
             return None
         # Normalize address comparison to avoid case-sensitivity issues
         if event.address.lower() != self.module_address.lower():
             return None
+        if self.module_adapter.csm_version < 3:
+            await self._csm_version_switcher(3)
         return template() + self.footer(event)

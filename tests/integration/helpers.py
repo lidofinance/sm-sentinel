@@ -12,6 +12,7 @@ from web3.types import RPCEndpoint, TxParams, TxReceipt
 
 from sentinel.events import EventMessages
 from sentinel.models import Block, Event
+from sentinel.app.health import HealthState
 from sentinel.rpc import Subscription
 
 
@@ -101,9 +102,17 @@ class EventReplayHarness(Subscription):
         backfill_w3: AsyncWeb3,
         module_adapter,
     ) -> None:
-        super().__init__(persistent_w3, module_adapter.allowed_events(), backfill_w3=backfill_w3)
-        self.event_messages = EventMessages(w3, module_adapter)
+        super().__init__(
+            persistent_w3,
+            health=HealthState(),
+            contract_abis=module_adapter.contract_abis,
+            backfill_w3=backfill_w3,
+        )
+        self.event_messages = EventMessages(w3, module_adapter, self.handle_csm_version_changed)
         self.processed_events: list[tuple[Event, str]] = []
+
+    async def handle_csm_version_changed(self, csm_version: int) -> None:
+        self.update_event_bindings(self.contract_abis)
 
     async def process_event_log(self, event: Event):
         event.tx = HexBytes("0xdeadbeef")

@@ -128,7 +128,9 @@ def test_config_parsing_and_templates(monkeypatch, stub_discover_contract_addres
     clear=True,
 )
 async def test_process_blocks_rate_limit(monkeypatch, stub_discover_contract_addresses):
+    from sentinel.app.health import HealthState
     from sentinel.config import get_config_async
+    from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
 
     class DummyW3:
@@ -136,9 +138,11 @@ async def test_process_blocks_rate_limit(monkeypatch, stub_discover_contract_add
 
     clear_config()
     await get_config_async()
-    from sentinel.texts import EVENT_DESCRIPTIONS
-
-    subscription = Subscription(DummyW3(), set(EVENT_DESCRIPTIONS.keys()))
+    subscription = Subscription(
+        DummyW3(),
+        health=HealthState(),
+        contract_abis=get_contract_abis(2),
+    )
     try:
         start = asyncio.get_running_loop().time()
         await subscription._throttle_process_blocks_request()
@@ -193,16 +197,20 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
     stub_discover_contract_addresses,
 ):
     from sentinel.config import get_config_async
+    from sentinel.app.health import HealthState
+    from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
-    from sentinel.texts import EVENT_DESCRIPTIONS
-
     class DummyW3:
         provider = None
 
     clear_config()
     await get_config_async()
 
-    subscription = Subscription(DummyW3(), set(EVENT_DESCRIPTIONS.keys()))
+    subscription = Subscription(
+        DummyW3(),
+        health=HealthState(),
+        contract_abis=get_contract_abis(2),
+    )
     rate_limit_error = web3.exceptions.Web3RPCError(
         message="{'code': 429, 'message': 'throughput exceeded'}",
         rpc_response={"error": {"code": 429, "message": "throughput exceeded"}},
@@ -243,16 +251,20 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
     stub_discover_contract_addresses,
 ):
     from sentinel.config import get_config_async
+    from sentinel.app.health import HealthState
+    from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
-    from sentinel.texts import EVENT_DESCRIPTIONS
-
     class DummyW3:
         provider = None
 
     clear_config()
     await get_config_async()
 
-    subscription = Subscription(DummyW3(), set(EVENT_DESCRIPTIONS.keys()))
+    subscription = Subscription(
+        DummyW3(),
+        health=HealthState(),
+        contract_abis=get_contract_abis(2),
+    )
     fatal_error = web3.exceptions.Web3RPCError(
         message="execution reverted",
         rpc_response={"error": {"code": 3, "message": "execution reverted"}},
