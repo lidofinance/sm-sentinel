@@ -6,17 +6,11 @@ from web3 import AsyncWeb3
 
 from sentinel.app.contracts import ContractAddresses, discover_contract_addresses, _build_web3
 from sentinel.models import (
-    ACCOUNTING_ABI,
-    MODULE_ABI,
-    EXIT_PENALTIES_ABI,
-    FEE_DISTRIBUTOR_ABI,
-    LIDO_LOCATOR_ABI,
-    PARAMETERS_REGISTRY_ABI,
-    STAKING_ROUTER_ABI,
-    VEBO_ABI,
+    ContractABIs,
+    get_contract_abis,
 )
 from sentinel.module_types import ModuleType
-from sentinel.texts import EVENT_DESCRIPTIONS, build_event_list_text
+from sentinel.texts import COMMUNITY_ALLOWED_EVENTS_BY_VERSION, build_event_list_text
 
 if TYPE_CHECKING:
     from sentinel.config import Config
@@ -42,7 +36,9 @@ class ModuleAdapter(Protocol):
     module_type: ModuleType
     addresses: ContractAddresses
     contracts: ModuleContracts
+    contract_abis: ContractABIs
     module_ui_url: str | None
+    csm_version: int
 
     def allowed_events(self) -> set[str]:
         ...
@@ -69,16 +65,22 @@ class BaseModuleAdapter:
         addresses: ContractAddresses,
         contracts: ModuleContracts,
         module_ui_url: str | None,
+        contract_abis: ContractABIs,
         event_handlers: dict[str, EventHandler] | None = None,
     ) -> None:
         self.module_type = module_type
         self.addresses = addresses
         self.contracts = contracts
+        self.contract_abis = contract_abis
         self.module_ui_url = module_ui_url
+        self.csm_version = addresses.csm_version
         self._event_handlers = event_handlers or {}
 
     def allowed_events(self) -> set[str]:
-        return set(EVENT_DESCRIPTIONS.keys())
+        return COMMUNITY_ALLOWED_EVENTS_BY_VERSION.get(
+            self.csm_version,
+            COMMUNITY_ALLOWED_EVENTS_BY_VERSION[3],
+        )
 
     def build_event_list_text(self) -> str:
         return build_event_list_text(self.allowed_events(), self.module_ui_url)
@@ -104,6 +106,7 @@ class CommunityModuleAdapter(BaseModuleAdapter):
         addresses: ContractAddresses,
         contracts: ModuleContracts,
         module_ui_url: str | None,
+        contract_abis: ContractABIs,
     ) -> None:
         if addresses.module_type != ModuleType.COMMUNITY:
             raise RuntimeError(
@@ -114,6 +117,7 @@ class CommunityModuleAdapter(BaseModuleAdapter):
             addresses=addresses,
             contracts=contracts,
             module_ui_url=module_ui_url,
+            contract_abis=contract_abis,
         )
 
 
@@ -124,42 +128,51 @@ class CuratedModuleAdapter(BaseModuleAdapter):
         addresses: ContractAddresses,
         contracts: ModuleContracts,
         module_ui_url: str | None,
+        contract_abis: ContractABIs,
     ) -> None:
         raise RuntimeError("Curated module adapter is not implemented yet.")
 
 
-def build_module_contracts(w3: AsyncWeb3, addresses: ContractAddresses) -> ModuleContracts:
+def build_module_contracts(
+    w3: AsyncWeb3,
+    addresses: ContractAddresses,
+    contract_abis: ContractABIs,
+) -> ModuleContracts:
     return ModuleContracts(
-        module=w3.eth.contract(address=addresses.module, abi=MODULE_ABI, decode_tuples=True),
+        module=w3.eth.contract(
+            address=addresses.module,
+            abi=contract_abis.module,
+            decode_tuples=True,
+        ),
         accounting=w3.eth.contract(
             address=addresses.accounting,
-            abi=ACCOUNTING_ABI,
+            abi=contract_abis.accounting,
             decode_tuples=True,
         ),
         parameters_registry=w3.eth.contract(
             address=addresses.parameters_registry,
-            abi=PARAMETERS_REGISTRY_ABI,
+            abi=contract_abis.parameters_registry,
             decode_tuples=True,
         ),
         fee_distributor=w3.eth.contract(
             address=addresses.fee_distributor,
-            abi=FEE_DISTRIBUTOR_ABI,
+            abi=contract_abis.fee_distributor,
         ),
         exit_penalties=w3.eth.contract(
             address=addresses.exit_penalties,
-            abi=EXIT_PENALTIES_ABI,
+            abi=contract_abis.exit_penalties,
         ),
         lido_locator=w3.eth.contract(
             address=addresses.lido_locator,
-            abi=LIDO_LOCATOR_ABI,
+            abi=contract_abis.lido_locator,
         ),
         staking_router=w3.eth.contract(
             address=addresses.staking_router,
-            abi=STAKING_ROUTER_ABI,
+            abi=contract_abis.staking_router,
         ),
         vebo=w3.eth.contract(
             address=addresses.vebo,
-            abi=VEBO_ABI,
+            abi=contract_abis.vebo,
         ),
     )
 
@@ -169,17 +182,20 @@ def build_module_adapter_from_addresses(
     w3: AsyncWeb3,
     module_ui_url: str | None,
 ) -> ModuleAdapter:
-    contracts = build_module_contracts(w3, addresses)
+    contract_abis = get_contract_abis(addresses.csm_version)
+    contracts = build_module_contracts(w3, addresses, contract_abis)
     if addresses.module_type == ModuleType.COMMUNITY:
         return CommunityModuleAdapter(
             addresses=addresses,
             contracts=contracts,
+            contract_abis=contract_abis,
             module_ui_url=module_ui_url,
         )
     if addresses.module_type == ModuleType.CURATED:
         return CuratedModuleAdapter(
             addresses=addresses,
             contracts=contracts,
+            contract_abis=contract_abis,
             module_ui_url=module_ui_url,
         )
     raise RuntimeError(f"Unsupported module type: {addresses.module_type!s}")
@@ -197,6 +213,7 @@ def build_module_adapter_from_config(cfg: "Config", w3: AsyncWeb3) -> ModuleAdap
         vebo=cfg.vebo_address,
         staking_module_id=cfg.staking_module_id,
         module_type=cfg.module_type,
+        csm_version=cfg.csm_version,
     )
     return build_module_adapter_from_addresses(addresses, w3, cfg.module_ui_url)
 

@@ -2,6 +2,7 @@ import pytest
 
 from sentinel.app.contracts import ContractAddresses
 from sentinel.app import module_adapter as adapter
+from sentinel.models import get_contract_abis
 from sentinel.module_types import ModuleType
 
 
@@ -17,6 +18,7 @@ def _dummy_addresses(module_type: ModuleType) -> ContractAddresses:
         vebo="0x0000000000000000000000000000000000000008",
         staking_module_id=1,
         module_type=module_type,
+        csm_version=3,
     )
 
 
@@ -39,6 +41,7 @@ def test_community_module_adapter_instantiation():
     result = adapter.CommunityModuleAdapter(
         addresses=addresses,
         contracts=contracts,
+        contract_abis=get_contract_abis(addresses.csm_version),
         module_ui_url=None,
     )
     assert result.module_type == ModuleType.COMMUNITY
@@ -51,6 +54,7 @@ def test_curated_module_adapter_instantiation():
         adapter.CuratedModuleAdapter(
             addresses=addresses,
             contracts=contracts,
+            contract_abis=get_contract_abis(addresses.csm_version),
             module_ui_url=None,
         )
 
@@ -66,9 +70,62 @@ def test_adapter_build_event_list_text_filters_allowed_events():
         module_type=ModuleType.COMMUNITY,
         addresses=addresses,
         contracts=contracts,
+        contract_abis=get_contract_abis(addresses.csm_version),
         module_ui_url="https://example.invalid",
     )
 
     text = limited.build_event_list_text()
-    assert "CSM v2 launched on mainnet" in text
+    assert "CSM v3 launched" in text
     assert "Keys were deposited" not in text
+
+
+def test_community_module_adapter_allowed_events_change_with_csm_version():
+    addresses_v2 = ContractAddresses(
+        module="0x0000000000000000000000000000000000000001",
+        accounting="0x0000000000000000000000000000000000000002",
+        parameters_registry="0x0000000000000000000000000000000000000003",
+        fee_distributor="0x0000000000000000000000000000000000000004",
+        exit_penalties="0x0000000000000000000000000000000000000005",
+        lido_locator="0x0000000000000000000000000000000000000006",
+        staking_router="0x0000000000000000000000000000000000000007",
+        vebo="0x0000000000000000000000000000000000000008",
+        staking_module_id=1,
+        module_type=ModuleType.COMMUNITY,
+        csm_version=2,
+    )
+    addresses_v3 = _dummy_addresses(ModuleType.COMMUNITY)
+
+    contracts = _dummy_contracts()
+    adapter_v2 = adapter.CommunityModuleAdapter(
+        addresses=addresses_v2,
+        contracts=contracts,
+        contract_abis=get_contract_abis(addresses_v2.csm_version),
+        module_ui_url=None,
+    )
+    adapter_v3 = adapter.CommunityModuleAdapter(
+        addresses=addresses_v3,
+        contracts=contracts,
+        contract_abis=get_contract_abis(addresses_v3.csm_version),
+        module_ui_url=None,
+    )
+
+    assert "ELRewardsStealingPenaltyReported" in adapter_v2.allowed_events()
+    assert "WithdrawalSubmitted" in adapter_v2.allowed_events()
+    assert "Initialized" not in adapter_v2.allowed_events()
+
+    assert "GeneralDelayedPenaltyReported" in adapter_v3.allowed_events()
+    assert "ValidatorWithdrawn" in adapter_v3.allowed_events()
+    assert "Initialized" in adapter_v3.allowed_events()
+    assert "ELRewardsStealingPenaltyReported" not in adapter_v3.allowed_events()
+
+    new_v3_events = {
+        "ValidatorSlashingReported",
+        "BondDebtIncreased",
+        "BondDebtCovered",
+        "CustomRewardsClaimerSet",
+        "FeeSplitsSet",
+        "ExpiredBondLockRemoved",
+        "KeyAllocatedBalanceChanged",
+    }
+    assert new_v3_events.isdisjoint(adapter_v2.allowed_events())
+    assert new_v3_events.issubset(adapter_v3.allowed_events())

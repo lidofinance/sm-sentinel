@@ -2,8 +2,17 @@ import asyncio
 import pytest
 from types import SimpleNamespace
 
-from sentinel.config import get_config_async, set_config
-from sentinel.texts import target_validators_count_changed
+from sentinel.config import clear_config, get_config_async, set_config
+from sentinel.texts import (
+    bond_debt_covered,
+    bond_debt_increased,
+    custom_rewards_claimer_set,
+    expired_bond_lock_removed,
+    fee_splits_set,
+    key_allocated_balance_changed,
+    target_validators_count_changed,
+    validator_slashing_reported,
+)
 from hexbytes import HexBytes
 
 
@@ -26,6 +35,62 @@ class _FakeFetcher:
         if self.exc is not None:
             raise self.exc
         return self.result
+
+
+def test_event_mappings_are_complete():
+    from sentinel.main import _assert_event_mappings
+
+    _assert_event_mappings()
+
+
+def test_new_v3_message_templates_render_core_fields():
+    assert "Bond debt increased" in bond_debt_increased("1 ether")
+    assert "Debt increase: `1 ether`" in bond_debt_increased("1 ether")
+
+    assert "Bond debt covered" in bond_debt_covered("2 ether")
+    assert "Covered amount: `2 ether`" in bond_debt_covered("2 ether")
+
+    assert "Custom rewards claimer changed" in custom_rewards_claimer_set("0x123")
+    assert "Rewards claimer: `0x123`" in custom_rewards_claimer_set("0x123")
+
+    assert "Custom rewards claimer removed" in custom_rewards_claimer_set(
+        "0x0000000000000000000000000000000000000000"
+    )
+
+    assert "Expired bond lock removed" in expired_bond_lock_removed()
+    assert "Key allocated balance changed" in key_allocated_balance_changed(7, "3 ether")
+    assert "Key index: `7`" in key_allocated_balance_changed(7, "3 ether")
+    assert "New allocated balance: `3 ether`" in key_allocated_balance_changed(7, "3 ether")
+
+
+def test_validator_slashing_reported_template_renders_pubkey_link():
+    message = validator_slashing_reported(
+        "0x1234",
+        "https://beaconcha.in/validator/0x1234",
+        7,
+    )
+
+    assert "Validator slashing reported" in message
+    assert "[0x1234](https://beaconcha.in/validator/0x1234)" in message
+    assert "Key index: `7`" in message
+
+
+def test_fee_splits_set_template_renders_fee_split_entries():
+    set_config(SimpleNamespace(module_ui_url="https://csm.lido.fi"))
+    try:
+        message = fee_splits_set(
+            [
+                {"recipient": "0x111", "share": 7000},
+                SimpleNamespace(recipient="0x222", share=3000),
+            ]
+        )
+    finally:
+        clear_config()
+
+    assert "Fee splits changed" in message
+    assert "0x111: 7000" in message
+    assert "0x222: 3000" in message
+    assert "[CSM UI](https://csm.lido.fi)" in message
 
 
 def test_limit_set_mode_1():
@@ -420,3 +485,104 @@ async def test_get_notification_plan_uses_adapter_override():
 
     assert isinstance(plan, NotificationPlan)
     assert plan.broadcast == "override"
+
+
+@pytest.mark.asyncio
+async def test_validator_slashing_reported_handler_formats_pubkey_and_footer():
+    from sentinel.events import EventMessages
+    from sentinel.models import Event
+
+    event_messages = EventMessages.__new__(EventMessages)
+    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.cfg = SimpleNamespace(
+        beaconchain_url_template="https://beaconcha.in/validator/{}",
+        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+    )
+    event_messages.footer = EventMessages.footer.__get__(event_messages)
+
+    event = Event(
+        event="ValidatorSlashingReported",
+        args={"nodeOperatorId": 42, "keyIndex": 7, "pubkey": bytes.fromhex("1234")},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    message = await EventMessages.validator_slashing_reported(event_messages, event)
+
+    assert "Validator slashing reported" in message
+    assert "[0x1234](https://beaconcha.in/validator/0x1234)" in message
+    assert "Key index: `7`" in message
+    assert "nodeOperatorId: 42" in message
+    assert "[Transaction](https://etherscan.io/tx/0xdeadbeef)" in message
+
+
+@pytest.mark.asyncio
+async def test_key_allocated_balance_changed_handler_humanizes_balance():
+    from sentinel.events import EventMessages
+    from sentinel.models import Event
+
+    event_messages = EventMessages.__new__(EventMessages)
+    event_messages.cfg = SimpleNamespace(
+        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+    )
+    event_messages.footer = EventMessages.footer.__get__(event_messages)
+
+    event = Event(
+        event="KeyAllocatedBalanceChanged",
+        args={"nodeOperatorId": 42, "keyIndex": 7, "newTotal": 10**18},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    message = await EventMessages.key_allocated_balance_changed(event_messages, event)
+
+    assert "Key allocated balance changed" in message
+    assert "Key index: `7`" in message
+    assert "New allocated balance: `1 ether`" in message
+    assert "nodeOperatorId: 42" in message
+
+
+@pytest.mark.asyncio
+async def test_initialized_event_only_emits_for_v3_module():
+    from sentinel.events import EventMessages
+    from sentinel.models import Event
+
+    class DummyAdapter:
+        def allowed_events(self):
+            return {"Initialized"}
+
+        async def event_enricher(self, event, messages):
+            return None
+
+    set_config(SimpleNamespace(module_ui_url="https://csm.lido.fi"))
+
+    event_messages = EventMessages.__new__(EventMessages)
+    event_messages.connectProvider = _DummyConnectProvider()
+    event_messages.cfg = SimpleNamespace(etherscan_tx_url_template="https://etherscan.io/tx/{}")
+    event_messages.footer = EventMessages.footer.__get__(event_messages)
+    event_messages.module_adapter = DummyAdapter()
+    event_messages.module_address = "0x0000000000000000000000000000000000000abc"
+
+    ignored_v2_event = Event(
+        event="Initialized",
+        args={"version": 2},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000abc",
+    )
+    emitted_v3_event = Event(
+        event="Initialized",
+        args={"version": 3},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000abc",
+    )
+
+    assert await EventMessages.get_notification_plan(event_messages, ignored_v2_event) is None
+
+    plan = await EventMessages.get_notification_plan(event_messages, emitted_v3_event)
+
+    assert plan is not None
+    assert "CSM v3 is live" in plan.broadcast

@@ -12,6 +12,7 @@ from web3.types import RPCEndpoint, TxParams, TxReceipt
 
 from sentinel.events import EventMessages
 from sentinel.models import Block, Event
+from sentinel.app.health import HealthState
 from sentinel.rpc import Subscription
 
 
@@ -101,7 +102,13 @@ class EventReplayHarness(Subscription):
         backfill_w3: AsyncWeb3,
         module_adapter,
     ) -> None:
-        super().__init__(persistent_w3, module_adapter.allowed_events(), backfill_w3=backfill_w3)
+        super().__init__(
+            persistent_w3,
+            module_adapter.allowed_events(),
+            health=HealthState(),
+            contract_abis=module_adapter.contract_abis,
+            backfill_w3=backfill_w3,
+        )
         self.event_messages = EventMessages(w3, module_adapter)
         self.processed_events: list[tuple[Event, str]] = []
 

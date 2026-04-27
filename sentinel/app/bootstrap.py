@@ -67,6 +67,7 @@ def create_runtime() -> BotRuntime:
             module_adapter.allowed_events(),
             health=health,
             backfill_w3=backfill_provider,
+            contract_abis=module_adapter.contract_abis,
         )
         job_context = JobContext(subscription)
 

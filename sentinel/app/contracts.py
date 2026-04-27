@@ -3,9 +3,14 @@ import json
 from dataclasses import dataclass
 
 from eth_typing import ChecksumAddress
+import web3.exceptions
 from web3 import WebSocketProvider, AsyncWeb3, AsyncHTTPProvider
 
-from sentinel.models import MODULE_ABI, LIDO_LOCATOR_ABI, STAKING_ROUTER_ABI
+from sentinel.models import (
+    DISCOVERY_LIDO_LOCATOR_ABI,
+    DISCOVERY_MODULE_ABI,
+    DISCOVERY_STAKING_ROUTER_ABI,
+)
 from sentinel.module_types import ModuleType, decode_module_type
 
 logger = logging.getLogger(__name__)
@@ -25,6 +30,7 @@ class ContractAddresses:
     vebo: ChecksumAddress
     staking_module_id: int
     module_type: ModuleType
+    csm_version: int
 
     def as_dict(self) -> dict[str, str | int]:
         return {
@@ -38,6 +44,7 @@ class ContractAddresses:
             "vebo": self.vebo,
             "staking_module_id": self.staking_module_id,
             "module_type": self.module_type.value,
+            "csm_version": self.csm_version,
         }
 
 
@@ -48,10 +55,15 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
         await w3.provider.connect()
 
     checksum = w3.to_checksum_address
-    module_contract = w3.eth.contract(address=checksum(module_address), abi=MODULE_ABI, decode_tuples=True)
+    module_contract = w3.eth.contract(
+        address=checksum(module_address),
+        abi=DISCOVERY_MODULE_ABI,
+        decode_tuples=True,
+    )
 
     module_type_raw = await module_contract.functions.getType().call()
     module_type = decode_module_type(module_type_raw)
+    csm_version = await _discover_csm_version(module_contract)
 
     accounting = await module_contract.functions.ACCOUNTING().call()
     parameters_registry = await module_contract.functions.PARAMETERS_REGISTRY().call()
@@ -59,13 +71,16 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
     exit_penalties = await module_contract.functions.EXIT_PENALTIES().call()
     lido_locator = await module_contract.functions.LIDO_LOCATOR().call()
 
-    locator = w3.eth.contract(address=checksum(_ensure_address(lido_locator, "LIDO_LOCATOR")), abi=LIDO_LOCATOR_ABI)
+    locator = w3.eth.contract(
+        address=checksum(_ensure_address(lido_locator, "LIDO_LOCATOR")),
+        abi=DISCOVERY_LIDO_LOCATOR_ABI,
+    )
     vebo = await locator.functions.validatorsExitBusOracle().call()
     staking_router = await locator.functions.stakingRouter().call()
 
     staking_router_contract = w3.eth.contract(
         address=checksum(_ensure_address(staking_router, "stakingRouter")),
-        abi=STAKING_ROUTER_ABI,
+        abi=DISCOVERY_STAKING_ROUTER_ABI,
     )
     modules = await staking_router_contract.functions.getStakingModules().call()
 
@@ -82,6 +97,7 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
         vebo=checksum(_ensure_address(vebo, "validatorsExitBusOracle()")),
         staking_module_id=module_id,
         module_type=module_type,
+        csm_version=csm_version,
     )
 
     _log_discovered_addresses(addresses)
@@ -97,6 +113,14 @@ def _ensure_address(raw_address: str, source: str) -> str:
     if not raw_address or raw_address == ZERO_ADDRESS:
         raise RuntimeError(f"Failed to discover address from {source}")
     return raw_address
+
+
+async def _discover_csm_version(module_contract) -> int:
+    try:
+        version = int(await module_contract.functions.getInitializedVersion().call())
+        return 3 if version >= 3 else 2
+    except (web3.exceptions.Web3Exception, ValueError):
+        return 2
 
 
 def _find_staking_module_id(modules: list[tuple], module_address: str) -> int:

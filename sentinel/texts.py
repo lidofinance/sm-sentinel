@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from aiogram.utils.formatting import Text, Bold, TextLink, Code, Italic
+from aiogram.utils.formatting import Text, Bold, TextLink, Code
 from web3.constants import ADDRESS_ZERO
 from sentinel.config import get_config
 
@@ -44,7 +44,7 @@ class EventGroup(StrEnum):
 GROUP_DESCRIPTIONS: dict[EventGroup, str] = {
     EventGroup.KEY_MANAGEMENT: "Changes related to keys and their status.",
     EventGroup.ADDRESS_AND_REWARD_CHANGES: "Changes or proposals regarding management and reward addresses.",
-    EventGroup.SLASHING_AND_STEALING: "Alerts for validator status and MEV stealing penalties.",
+    EventGroup.SLASHING_AND_STEALING: "Alerts for validator status and delayed penalties.",
     EventGroup.WITHDRAWAL_AND_EXIT: "Notifications for exit requests and confirmation of exits.",
     EventGroup.COMMON_CSM: "",
 }
@@ -69,6 +69,11 @@ EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition(
         name="KeyRemovalChargeApplied",
         description="- 🔑 Applied charge for key removal",
+        group_title=EventGroup.KEY_MANAGEMENT,
+    ),
+    EventDefinition(
+        name="KeyAllocatedBalanceChanged",
+        description="- 👀 Key allocated bond balance changed",
         group_title=EventGroup.KEY_MANAGEMENT,
     ),
     EventDefinition(
@@ -102,6 +107,16 @@ EVENT_CATALOG: list[EventDefinition] = [
         group_title=EventGroup.ADDRESS_AND_REWARD_CHANGES,
     ),
     EventDefinition(
+        name="CustomRewardsClaimerSet",
+        description="- ℹ️ Custom rewards claimer changed",
+        group_title=EventGroup.ADDRESS_AND_REWARD_CHANGES,
+    ),
+    EventDefinition(
+        name="FeeSplitsSet",
+        description="- ℹ️ Reward fee splits changed",
+        group_title=EventGroup.ADDRESS_AND_REWARD_CHANGES,
+    ),
+    EventDefinition(
         name="ELRewardsStealingPenaltyReported",
         description="- 🚨 Penalty for stealing EL rewards reported",
         group_title=EventGroup.SLASHING_AND_STEALING,
@@ -114,6 +129,46 @@ EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition(
         name="ELRewardsStealingPenaltyCancelled",
         description="- 😮‍💨 Cancelled penalty for stealing EL rewards",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="GeneralDelayedPenaltyReported",
+        description="- 🚨 General delayed penalty reported",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="GeneralDelayedPenaltySettled",
+        description="- 🚨 General delayed penalty confirmed and applied",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="GeneralDelayedPenaltyCancelled",
+        description="- 😮‍💨 Cancelled general delayed penalty",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="GeneralDelayedPenaltyCompensated",
+        description="- ✅ General delayed penalty compensated",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="ValidatorSlashingReported",
+        description="- 🚨 Validator slashing reported",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="BondDebtIncreased",
+        description="- 🚨 Bond debt increased",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="BondDebtCovered",
+        description="- ✅ Bond debt covered",
+        group_title=EventGroup.SLASHING_AND_STEALING,
+    ),
+    EventDefinition(
+        name="ExpiredBondLockRemoved",
+        description="- ✅ Expired bond lock removed",
         group_title=EventGroup.SLASHING_AND_STEALING,
     ),
     EventDefinition(
@@ -142,18 +197,69 @@ EVENT_CATALOG: list[EventDefinition] = [
         group_title=EventGroup.WITHDRAWAL_AND_EXIT,
     ),
     EventDefinition(
+        name="ValidatorWithdrawn",
+        description="- 👀 Validator withdrawal confirmed",
+        group_title=EventGroup.WITHDRAWAL_AND_EXIT,
+    ),
+    EventDefinition(
         name="DistributionLogUpdated",
         description="- 📈 New rewards distributed",
         group_title=EventGroup.COMMON_CSM,
     ),
     EventDefinition(
         name="Initialized",
-        description="- 🎉 CSM v2 launched on mainnet",
+        description="- 🎉 CSM v3 launched",
         group_title=EventGroup.COMMON_CSM,
     ),
 ]
 
 EVENT_DESCRIPTIONS = {event.name: event.description for event in EVENT_CATALOG}
+
+COMMUNITY_COMMON_EVENTS = {
+    "VettedSigningKeysCountDecreased",
+    "DepositedSigningKeysCountChanged",
+    "TotalSigningKeysCountChanged",
+    "KeyRemovalChargeApplied",
+    "BondCurveSet",
+    "TargetValidatorsCountChanged",
+    "NodeOperatorManagerAddressChangeProposed",
+    "NodeOperatorManagerAddressChanged",
+    "NodeOperatorRewardAddressChangeProposed",
+    "NodeOperatorRewardAddressChanged",
+    "ValidatorExitRequest",
+    "ValidatorExitDelayProcessed",
+    "TriggeredExitFeeRecorded",
+    "StrikesPenaltyProcessed",
+    "DistributionLogUpdated",
+}
+
+COMMUNITY_V2_ONLY_EVENTS = {
+    "ELRewardsStealingPenaltyReported",
+    "ELRewardsStealingPenaltySettled",
+    "ELRewardsStealingPenaltyCancelled",
+    "WithdrawalSubmitted",
+}
+
+COMMUNITY_V3_ONLY_EVENTS = {
+    "GeneralDelayedPenaltyReported",
+    "GeneralDelayedPenaltySettled",
+    "GeneralDelayedPenaltyCancelled",
+    "GeneralDelayedPenaltyCompensated",
+    "ValidatorSlashingReported",
+    "BondDebtIncreased",
+    "BondDebtCovered",
+    "CustomRewardsClaimerSet",
+    "FeeSplitsSet",
+    "ExpiredBondLockRemoved",
+    "KeyAllocatedBalanceChanged",
+    "ValidatorWithdrawn",
+    "Initialized",
+}
+
+COMMUNITY_ALLOWED_EVENTS_BY_VERSION: dict[int, set[str]] = {
+    2: COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS,
+    3: COMMUNITY_COMMON_EVENTS | COMMUNITY_V3_ONLY_EVENTS,
+}
 
 
 def _group_event_catalog() -> list[tuple[EventGroup, list[EventDefinition]]]:
@@ -259,6 +365,101 @@ def el_rewards_stealing_penalty_settled(burnt):
                     Code(burnt), " burnt from bond")
 
 
+@RegisterEventMessage("GeneralDelayedPenaltyCancelled")
+def general_delayed_penalty_cancelled(remaining):
+    return markdown("😮‍💨 ", Bold("General delayed penalty cancelled"), nl(),
+                    "Remaining amount: ", Code(remaining))
+
+
+@RegisterEventMessage("GeneralDelayedPenaltyCompensated")
+def general_delayed_penalty_compensated(amount):
+    return markdown("✅ ", Bold("General delayed penalty compensated"), nl(),
+                    "Compensated amount: ", Code(amount))
+
+
+@RegisterEventMessage("GeneralDelayedPenaltyReported")
+def general_delayed_penalty_reported(amount, additional_fine, details):
+    return markdown("🚨 ", Bold("General delayed penalty reported"), nl(),
+                    "Penalty amount: ", Code(amount), nl(1),
+                    "Additional fine: ", Code(additional_fine), nl(1),
+                    "Details: ", Code(details))
+
+
+@RegisterEventMessage("GeneralDelayedPenaltySettled")
+def general_delayed_penalty_settled(amount):
+    return markdown("🚨 ", Bold("General delayed penalty confirmed and applied"), nl(),
+                    "Settled amount: ", Code(amount))
+
+
+@RegisterEventMessage("ValidatorSlashingReported")
+def validator_slashing_reported(key, key_url, key_index):
+    return markdown("🚨 ", Bold("Validator slashing reported"), nl(),
+                    "Validator: ", TextLink(key, url=key_url), nl(1),
+                    "Key index: ", Code(str(key_index)), nl(),
+                    "Review the validator status and expected bond impact.")
+
+
+@RegisterEventMessage("BondDebtIncreased")
+def bond_debt_increased(amount):
+    return markdown("🚨 ", Bold("Bond debt increased"), nl(),
+                    "Debt increase: ", Code(amount), nl(),
+                    "Future rewards or bond changes may be used to cover this debt.")
+
+
+@RegisterEventMessage("BondDebtCovered")
+def bond_debt_covered(amount):
+    return markdown("✅ ", Bold("Bond debt covered"), nl(),
+                    "Covered amount: ", Code(amount))
+
+
+@RegisterEventMessage("CustomRewardsClaimerSet")
+def custom_rewards_claimer_set(rewards_claimer):
+    if rewards_claimer == ADDRESS_ZERO:
+        return markdown("ℹ️ ", Bold("Custom rewards claimer removed"), nl(),
+                        "Custom rewards claimer was removed for this Node Operator.")
+    return markdown("ℹ️ ", Bold("Custom rewards claimer changed"), nl(),
+                    "Rewards claimer: ", Code(rewards_claimer))
+
+
+def _fee_split_value(fee_split, field: str, index: int):
+    if hasattr(fee_split, field):
+        return getattr(fee_split, field)
+    if isinstance(fee_split, dict):
+        return fee_split[field]
+    return fee_split[index]
+
+
+def _format_fee_splits(fee_splits) -> str:
+    if not fee_splits:
+        return "none"
+    return "; ".join(
+        f"{_fee_split_value(fee_split, 'recipient', 0)}: {_fee_split_value(fee_split, 'share', 1)}"
+        for fee_split in fee_splits
+    )
+
+
+@RegisterEventMessage("FeeSplitsSet")
+def fee_splits_set(fee_splits):
+    cfg = get_config()
+    return markdown("ℹ️ ", Bold("Fee splits changed"), nl(),
+                    "Fee splits: ", Code(_format_fee_splits(fee_splits)), nl(1),
+                    "Review the current rewards setup in the ",
+                    TextLink("CSM UI", url=cfg.module_ui_url or ""))
+
+
+@RegisterEventMessage("ExpiredBondLockRemoved")
+def expired_bond_lock_removed():
+    return markdown("✅ ", Bold("Expired bond lock removed"), nl(),
+                    "More bond may now be available for normal operations.")
+
+
+@RegisterEventMessage("KeyAllocatedBalanceChanged")
+def key_allocated_balance_changed(key_index, new_total):
+    return markdown("👀 ", Bold("Key allocated balance changed"), nl(),
+                    "Key index: ", Code(str(key_index)), nl(1),
+                    "New allocated balance: ", Code(new_total))
+
+
 @RegisterEventMessage("KeyRemovalChargeApplied")
 def key_removal_charge_applied(amount):
     return markdown("🔑 ", Bold("Key removal charge applied"), nl(),
@@ -324,6 +525,18 @@ def withdrawal_submitted(key, key_url, amount):
                     "Withdrawn key: ", TextLink(key, url=key_url),
                     " with exit balance: ", Code(amount), nl(),
                     "Check the amount of the bond released at ", TextLink("CSM UI", url=cfg.module_ui_url or ""))
+
+
+@RegisterEventMessage("ValidatorWithdrawn")
+def validator_withdrawn(key, key_url, balance, slashing_penalty):
+    parts: list = [
+        "👀 ", Bold("Validator withdrawal confirmed"), nl(),
+        "Withdrawn key: ", TextLink(key, url=key_url), nl(1),
+        "Exit balance: ", Code(balance),
+    ]
+    if slashing_penalty not in {"0 ether", "0 wei"}:
+        parts.extend([nl(1), "Slashing penalty: ", Code(slashing_penalty)])
+    return markdown(*parts)
 
 
 @RegisterEventMessage("TotalSigningKeysCountChanged")
@@ -433,14 +646,9 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
 
 @RegisterEventMessage("Initialized")
 def initialized():
+    cfg = get_config()
     return markdown(
-        "🎉 ", Bold("CSM v2 is live!"), nl(),
-        "No software update or migration is required. Explore the ", TextLink("CSM widget", url="https://csm.lido.fi"),
-        " to try out new features. More info ", TextLink("here.", url="https://discord.com/channels/761182643269795850/1293241757382738001/1399751236579758140"), nl(),
-        Bold("For those who are in the "),
-        TextLink("initial ICS list", url="https://ipfs.io/ipfs/bafkreido7ieacbe6nlhdivxfp2gd5kxovofngf6qdmahih4laihm675e2a"),
-        Bold(" or applied for ICS, please read "),
-        TextLink("this short note", url="https://hackmd.io/@lido/csm-v2-checklist"),
-        Bold(" to learn more."), nl(),
-        Italic("Thank you all for being with us from v1 to v2. CSM is committed to bringing more home stakers into Ethereum. We’d greatly appreciate your help in amplifying this update!")
+        "🎉 ", Bold("CSM v3 is live!"), nl(),
+        "Check the ", TextLink("CSM UI", url=cfg.module_ui_url or ""),
+        " for updated operator workflows and current module details."
     )

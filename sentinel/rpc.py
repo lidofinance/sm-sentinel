@@ -23,11 +23,8 @@ from sentinel.texts import EVENT_DESCRIPTIONS
 from sentinel.models import (
     Event,
     Block,
-    MODULE_ABI,
-    VEBO_ABI,
-    FEE_DISTRIBUTOR_ABI,
-    EXIT_PENALTIES_ABI,
-    ACCOUNTING_ABI,
+    ContractABIs,
+    get_contract_abis,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +49,7 @@ class Subscription:
         allowed_events: set[str],
         *,
         health: HealthState,
+        contract_abis: ContractABIs,
         backfill_w3: AsyncWeb3 | None = None,
     ):
         super().__init__()
@@ -59,15 +57,16 @@ class Subscription:
         self._subscriptions_started = asyncio.Event()
         self._w3 = w3
         self._backfill_w3 = backfill_w3 or w3
+        self.cfg: Config = get_config()
+        self.contract_abis = contract_abis
         self.abi_by_topics = topics_to_follow(
             allowed_events,
-            MODULE_ABI,
-            ACCOUNTING_ABI,
-            FEE_DISTRIBUTOR_ABI,
-            VEBO_ABI,
-            EXIT_PENALTIES_ABI,
+            self.contract_abis.module,
+            self.contract_abis.accounting,
+            self.contract_abis.fee_distributor,
+            self.contract_abis.vebo,
+            self.contract_abis.exit_penalties,
         )
-        self.cfg: Config = get_config()
         self._health = health
         rps_limit = self.cfg.process_blocks_requests_per_second
         self._process_blocks_request_interval = (1 / rps_limit) if rps_limit else None
@@ -167,9 +166,10 @@ class Subscription:
         if self._shutdown_event.is_set():
             return
         async for w3 in self.w3:
-            vebo = w3.eth.contract(address=self.cfg.vebo_address, abi=VEBO_ABI)
+            vebo = w3.eth.contract(address=self.cfg.vebo_address, abi=self.contract_abis.vebo)
             fee_distributor = w3.eth.contract(
-                address=self.cfg.fee_distributor_address, abi=FEE_DISTRIBUTOR_ABI
+                address=self.cfg.fee_distributor_address,
+                abi=self.contract_abis.fee_distributor,
             )
 
             subs_module = LogsSubscription(
@@ -407,7 +407,15 @@ class TerminalSubscription(Subscription):
 
 
 if __name__ == "__main__":
+    cfg = get_config()
     provider = AsyncWeb3(WebSocketProvider(os.getenv("WEB3_SOCKET_PROVIDER")))
 
     allowed_events = set(EVENT_DESCRIPTIONS.keys())
-    asyncio.run(TerminalSubscription(provider, allowed_events, health=HealthState()).subscribe())
+    asyncio.run(
+        TerminalSubscription(
+            provider,
+            allowed_events,
+            health=HealthState(),
+            contract_abis=get_contract_abis(cfg.csm_version),
+        ).subscribe()
+    )

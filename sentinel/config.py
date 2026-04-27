@@ -43,6 +43,7 @@ class Config:
     staking_router_address: ChecksumAddress
     staking_module_id: int
     module_type: ModuleType
+    csm_version: int
 
     # URLs
     etherscan_url: str | None
@@ -144,6 +145,7 @@ async def _build_config_from_env() -> Config:
         staking_router_address=addresses.staking_router,
         staking_module_id=addresses.staking_module_id,
         module_type=addresses.module_type,
+        csm_version=addresses.csm_version,
         etherscan_url=os.getenv("ETHERSCAN_URL"),
         beaconchain_url=os.getenv("BEACONCHAIN_URL"),
         module_ui_url=module_ui_url,

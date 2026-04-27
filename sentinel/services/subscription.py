@@ -15,6 +15,7 @@ logging.getLogger("web3.providers.WebSocketProvider").setLevel(logging.WARNING)
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
+    from sentinel.models import ContractABIs
 
 
 class TelegramSubscription(Subscription):
@@ -28,9 +29,16 @@ class TelegramSubscription(Subscription):
         allowed_events: set[str],
         *,
         health: HealthState,
+        contract_abis: "ContractABIs",
         backfill_w3=None,
     ) -> None:
-        super().__init__(w3, allowed_events, health=health, backfill_w3=backfill_w3)
+        super().__init__(
+            w3,
+            allowed_events,
+            health=health,
+            backfill_w3=backfill_w3,
+            contract_abis=contract_abis,
+        )
         self.application = application
         self.event_messages = event_messages
         self._ignore_subscription_events_until_block: int | None = None

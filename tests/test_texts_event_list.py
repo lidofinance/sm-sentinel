@@ -9,7 +9,7 @@ def test_build_event_list_text_for_common_group():
         "A 🚨 means urgent action is required from you\n"
         "\n"
         "*Common CSM Events for all the Node Operators:*\n"
-        "\\- 🎉 CSM v2 launched on mainnet\n"
+        "\\- 🎉 CSM v3 launched\n"
         "\n"
         "\n"
     )
