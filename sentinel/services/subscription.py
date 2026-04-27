@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from telegram import LinkPreviewOptions
@@ -9,6 +10,7 @@ from sentinel.app.health import HealthState
 from sentinel.models import Block, Event
 from sentinel.rpc import Subscription
 from sentinel.app.storage import BotStorage
+from sentinel.config import set_config
 
 logger = logging.getLogger(__name__)
 logging.getLogger("web3.providers.WebSocketProvider").setLevel(logging.WARNING)
@@ -26,7 +28,6 @@ class TelegramSubscription(Subscription):
         w3,
         application: Application,
         event_messages,
-        allowed_events: set[str],
         *,
         health: HealthState,
         contract_abis: "ContractABIs",
@@ -34,7 +35,6 @@ class TelegramSubscription(Subscription):
     ) -> None:
         super().__init__(
             w3,
-            allowed_events,
             health=health,
             backfill_w3=backfill_w3,
             contract_abis=contract_abis,
@@ -51,7 +51,36 @@ class TelegramSubscription(Subscription):
     def finish_catchup(self) -> None:
         self._ignore_subscription_events_until_block = None
 
+    async def handle_csm_version_changed(self, csm_version: int) -> None:
+        from sentinel.app.module_adapter import build_module_adapter_from_config
+        from sentinel.app.runtime import get_runtime_from_application
+
+        runtime = get_runtime_from_application(self.application)
+        if runtime.module_adapter.csm_version == csm_version:
+            self.update_event_bindings(runtime.module_adapter.contract_abis)
+            return
+
+        cfg = replace(runtime.config, csm_version=csm_version)
+        set_config(cfg)
+        module_adapter = build_module_adapter_from_config(cfg, self.event_messages.w3)
+
+        runtime.config = cfg
+        runtime.module_adapter = module_adapter
+        self.cfg = cfg
+        self.event_messages.cfg = cfg
+        self.event_messages.reconfigure(module_adapter)
+        self.update_event_bindings(module_adapter.contract_abis)
+        logger.info("CSM runtime bindings switched to version %s", csm_version)
+
+    async def _prepare_event_for_delivery(self, event: Event) -> None:
+        if event.event != "Initialized":
+            return
+        # Run the control event handler before queueing so subsequent v3 logs can
+        # be decoded with v3 ABI/topic bindings even if Telegram update handling lags.
+        await self.event_messages.get_notification_plan(event)
+
     async def process_event_log(self, event: Event):
+        await self._prepare_event_for_delivery(event)
         await self.application.update_queue.put(event)
 
     async def process_new_block(self, block: Block):
@@ -63,6 +92,7 @@ class TelegramSubscription(Subscription):
         threshold = self._ignore_subscription_events_until_block
         if threshold is not None and event.block <= threshold:
             return
+        await self._prepare_event_for_delivery(event)
         await self.application.update_queue.put(event)
 
     async def handle_event_log(self, event: Event, context: "BotContext"):

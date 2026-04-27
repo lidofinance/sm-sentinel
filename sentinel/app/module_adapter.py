@@ -10,7 +10,11 @@ from sentinel.models import (
     get_contract_abis,
 )
 from sentinel.module_types import ModuleType
-from sentinel.texts import COMMUNITY_ALLOWED_EVENTS_BY_VERSION, build_event_list_text
+from sentinel.texts import (
+    COMMUNITY_CATALOG_EVENTS_BY_VERSION,
+    COMMUNITY_NOTIFIABLE_EVENTS,
+    build_event_list_text,
+)
 
 if TYPE_CHECKING:
     from sentinel.config import Config
@@ -40,7 +44,10 @@ class ModuleAdapter(Protocol):
     module_ui_url: str | None
     csm_version: int
 
-    def allowed_events(self) -> set[str]:
+    def catalog_events(self) -> set[str]:
+        ...
+
+    def notifiable_events(self) -> set[str]:
         ...
 
     def build_event_list_text(self) -> str:
@@ -76,14 +83,17 @@ class BaseModuleAdapter:
         self.csm_version = addresses.csm_version
         self._event_handlers = event_handlers or {}
 
-    def allowed_events(self) -> set[str]:
-        return COMMUNITY_ALLOWED_EVENTS_BY_VERSION.get(
+    def catalog_events(self) -> set[str]:
+        return COMMUNITY_CATALOG_EVENTS_BY_VERSION.get(
             self.csm_version,
-            COMMUNITY_ALLOWED_EVENTS_BY_VERSION[3],
+            COMMUNITY_CATALOG_EVENTS_BY_VERSION[3],
         )
 
+    def notifiable_events(self) -> set[str]:
+        return COMMUNITY_NOTIFIABLE_EVENTS
+
     def build_event_list_text(self) -> str:
-        return build_event_list_text(self.allowed_events(), self.module_ui_url)
+        return build_event_list_text(self.catalog_events(), self.module_ui_url)
 
     def get_event_handler(self, event_name: str) -> EventHandler | None:
         return self._event_handlers.get(event_name)

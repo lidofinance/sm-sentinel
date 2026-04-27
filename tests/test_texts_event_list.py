@@ -2,8 +2,8 @@ from sentinel.texts import build_event_list_text
 
 
 def test_build_event_list_text_for_common_group():
-    allowed_events = {"Initialized"}
-    text = build_event_list_text(allowed_events)
+    catalog_events = {"Initialized"}
+    text = build_event_list_text(catalog_events)
     expected = (
         "Here is the list of events you will receive notifications for:\n"
         "A 🚨 means urgent action is required from you\n"
@@ -17,8 +17,8 @@ def test_build_event_list_text_for_common_group():
 
 
 def test_build_event_list_text_for_key_management_group():
-    allowed_events = {"DepositedSigningKeysCountChanged"}
-    text = build_event_list_text(allowed_events)
+    catalog_events = {"DepositedSigningKeysCountChanged"}
+    text = build_event_list_text(catalog_events)
     expected = (
         "Here is the list of events you will receive notifications for:\n"
         "A 🚨 means urgent action is required from you\n"

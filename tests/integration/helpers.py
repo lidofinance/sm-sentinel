@@ -104,13 +104,15 @@ class EventReplayHarness(Subscription):
     ) -> None:
         super().__init__(
             persistent_w3,
-            module_adapter.allowed_events(),
             health=HealthState(),
             contract_abis=module_adapter.contract_abis,
             backfill_w3=backfill_w3,
         )
-        self.event_messages = EventMessages(w3, module_adapter)
+        self.event_messages = EventMessages(w3, module_adapter, self.handle_csm_version_changed)
         self.processed_events: list[tuple[Event, str]] = []
+
+    async def handle_csm_version_changed(self, csm_version: int) -> None:
+        self.update_event_bindings(self.contract_abis)
 
     async def process_event_log(self, event: Event):
         event.tx = HexBytes("0xdeadbeef")

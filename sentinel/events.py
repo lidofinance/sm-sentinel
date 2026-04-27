@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 DistributionLogFetcher = Callable[[str], Awaitable[dict | list]]
 MessageTemplate = Callable[..., str]
+CsmVersionSwitcher = Callable[[int], Awaitable[None]]
 
 
 @dataclass
@@ -97,20 +98,28 @@ class EventMessages:
         self,
         w3: AsyncWeb3,
         module_adapter: "ModuleAdapter",
+        csm_version_switcher: CsmVersionSwitcher,
         distribution_log_fetcher: "DistributionLogFetcher | None" = None,
     ):
         self.connectProvider = ConnectOnDemand(w3)
         self.w3 = w3
         self.module_adapter = module_adapter
+        self._csm_version_switcher = csm_version_switcher
         self._distribution_log_fetcher = distribution_log_fetcher or self._default_distribution_log_fetcher
 
         # Config snapshot
         self.cfg = get_config()
+        self.reconfigure(module_adapter)
+
+    def reconfigure(self, module_adapter: "ModuleAdapter") -> None:
+        """Update module-specific bindings after a runtime module version switch."""
+
         self.module_address = module_adapter.addresses.module
         self.accounting_address = module_adapter.addresses.accounting
         self.parameters_registry_address = module_adapter.addresses.parameters_registry
 
         # Contracts (module-specific adapter)
+        self.module_adapter = module_adapter
         self.module = module_adapter.contracts.module
         self.accounting = module_adapter.contracts.accounting
         self.parametersRegistry = module_adapter.contracts.parameters_registry
@@ -144,7 +153,7 @@ class EventMessages:
         return NotificationPlan(broadcast=EVENT_EMITS.format(event.event, event.args))
 
     async def get_notification_plan(self, event: Event):
-        if event.event not in self.module_adapter.allowed_events():
+        if event.event not in self.module_adapter.notifiable_events():
             return None
         async with self.connectProvider:
             result = await self.module_adapter.event_enricher(event, self)
@@ -393,7 +402,12 @@ class EventMessages:
         key = self.w3.to_hex(event.args['pubkey'])
         beacon_template = self._require_template(self.cfg.beaconchain_url_template, "BEACONCHAIN_URL")
         key_url = beacon_template.format(key)
-        penalty = humanize_wei(event.args['delayPenalty'])
+        penalty_amount = (
+            event.args['delayPenalty']
+            if 'delayPenalty' in event.args
+            else event.args['delayFee']
+        )
+        penalty = humanize_wei(penalty_amount)
         return template(key, key_url, penalty) + self.footer(event)
 
     @RegisterEvent('TriggeredExitFeeRecorded')
@@ -497,4 +511,6 @@ class EventMessages:
         # Normalize address comparison to avoid case-sensitivity issues
         if event.address.lower() != self.module_address.lower():
             return None
+        if self.module_adapter.csm_version < 3:
+            await self._csm_version_switcher(3)
         return template() + self.footer(event)

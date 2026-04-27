@@ -138,11 +138,8 @@ async def test_process_blocks_rate_limit(monkeypatch, stub_discover_contract_add
 
     clear_config()
     await get_config_async()
-    from sentinel.texts import EVENT_DESCRIPTIONS
-
     subscription = Subscription(
         DummyW3(),
-        set(EVENT_DESCRIPTIONS.keys()),
         health=HealthState(),
         contract_abis=get_contract_abis(2),
     )
@@ -203,8 +200,6 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
     from sentinel.app.health import HealthState
     from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
-    from sentinel.texts import EVENT_DESCRIPTIONS
-
     class DummyW3:
         provider = None
 
@@ -213,7 +208,6 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
 
     subscription = Subscription(
         DummyW3(),
-        set(EVENT_DESCRIPTIONS.keys()),
         health=HealthState(),
         contract_abis=get_contract_abis(2),
     )
@@ -260,8 +254,6 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
     from sentinel.app.health import HealthState
     from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
-    from sentinel.texts import EVENT_DESCRIPTIONS
-
     class DummyW3:
         provider = None
 
@@ -270,7 +262,6 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
 
     subscription = Subscription(
         DummyW3(),
-        set(EVENT_DESCRIPTIONS.keys()),
         health=HealthState(),
         contract_abis=get_contract_abis(2),
     )

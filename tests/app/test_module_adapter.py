@@ -59,9 +59,9 @@ def test_curated_module_adapter_instantiation():
         )
 
 
-def test_adapter_build_event_list_text_filters_allowed_events():
+def test_adapter_build_event_list_text_filters_catalog_events():
     class LimitedAdapter(adapter.BaseModuleAdapter):
-        def allowed_events(self) -> set[str]:
+        def catalog_events(self) -> set[str]:
             return {"Initialized"}
 
     addresses = _dummy_addresses(ModuleType.COMMUNITY)
@@ -79,7 +79,7 @@ def test_adapter_build_event_list_text_filters_allowed_events():
     assert "Keys were deposited" not in text
 
 
-def test_community_module_adapter_allowed_events_change_with_csm_version():
+def test_community_module_adapter_catalog_events_change_with_csm_version():
     addresses_v2 = ContractAddresses(
         module="0x0000000000000000000000000000000000000001",
         accounting="0x0000000000000000000000000000000000000002",
@@ -109,14 +109,14 @@ def test_community_module_adapter_allowed_events_change_with_csm_version():
         module_ui_url=None,
     )
 
-    assert "ELRewardsStealingPenaltyReported" in adapter_v2.allowed_events()
-    assert "WithdrawalSubmitted" in adapter_v2.allowed_events()
-    assert "Initialized" not in adapter_v2.allowed_events()
+    assert "ELRewardsStealingPenaltyReported" in adapter_v2.catalog_events()
+    assert "WithdrawalSubmitted" in adapter_v2.catalog_events()
+    assert "Initialized" not in adapter_v2.catalog_events()
 
-    assert "GeneralDelayedPenaltyReported" in adapter_v3.allowed_events()
-    assert "ValidatorWithdrawn" in adapter_v3.allowed_events()
-    assert "Initialized" in adapter_v3.allowed_events()
-    assert "ELRewardsStealingPenaltyReported" not in adapter_v3.allowed_events()
+    assert "GeneralDelayedPenaltyReported" in adapter_v3.catalog_events()
+    assert "ValidatorWithdrawn" in adapter_v3.catalog_events()
+    assert "Initialized" in adapter_v3.catalog_events()
+    assert "ELRewardsStealingPenaltyReported" not in adapter_v3.catalog_events()
 
     new_v3_events = {
         "ValidatorSlashingReported",
@@ -127,5 +127,5 @@ def test_community_module_adapter_allowed_events_change_with_csm_version():
         "ExpiredBondLockRemoved",
         "KeyAllocatedBalanceChanged",
     }
-    assert new_v3_events.isdisjoint(adapter_v2.allowed_events())
-    assert new_v3_events.issubset(adapter_v3.allowed_events())
+    assert new_v3_events.isdisjoint(adapter_v2.catalog_events())
+    assert new_v3_events.issubset(adapter_v3.catalog_events())

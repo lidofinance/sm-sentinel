@@ -59,12 +59,15 @@ def create_runtime() -> BotRuntime:
         )
 
         module_adapter = build_module_adapter_from_config(cfg, rpc_provider)
-        event_messages = EventMessages(rpc_provider, module_adapter)
+
+        async def switch_csm_version(csm_version: int) -> None:
+            await subscription.handle_csm_version_changed(csm_version)
+
+        event_messages = EventMessages(rpc_provider, module_adapter, switch_csm_version)
         subscription = TelegramSubscription(
             persistent_provider,
             application,
             event_messages,
-            module_adapter.allowed_events(),
             health=health,
             backfill_w3=backfill_provider,
             contract_abis=module_adapter.contract_abis,

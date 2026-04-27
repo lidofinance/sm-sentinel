@@ -400,7 +400,10 @@ async def test_get_notification_plan_skips_disallowed_event():
     from sentinel.models import Event
 
     class DummyAdapter:
-        def allowed_events(self):
+        def catalog_events(self):
+            return set()
+
+        def notifiable_events(self):
             return set()
 
         async def event_enricher(self, event, messages):
@@ -428,7 +431,10 @@ async def test_get_notification_plan_sets_node_operator_target():
     from sentinel.models import Event
 
     class DummyAdapter:
-        def allowed_events(self):
+        def catalog_events(self):
+            return {"DepositedSigningKeysCountChanged"}
+
+        def notifiable_events(self):
             return {"DepositedSigningKeysCountChanged"}
 
         async def event_enricher(self, event, messages):
@@ -461,7 +467,10 @@ async def test_get_notification_plan_uses_adapter_override():
     from sentinel.models import Event
 
     class DummyAdapter:
-        def allowed_events(self):
+        def catalog_events(self):
+            return {"BondCurveSet"}
+
+        def notifiable_events(self):
             return {"BondCurveSet"}
 
         async def event_enricher(self, event, messages):
@@ -485,6 +494,189 @@ async def test_get_notification_plan_uses_adapter_override():
 
     assert isinstance(plan, NotificationPlan)
     assert plan.broadcast == "override"
+
+
+def test_subscription_decodes_v2_and_v3_transition_events():
+    from web3 import AsyncWeb3
+
+    from sentinel.app.health import HealthState
+    from sentinel.models import get_contract_abis
+    from sentinel.rpc import Subscription
+    from sentinel.texts import COMMUNITY_CATALOG_EVENTS_BY_VERSION
+
+    class ProbeSubscription(Subscription):
+        async def process_event_log(self, event):
+            raise AssertionError("not used")
+
+        async def process_new_block(self, block):
+            raise AssertionError("not used")
+
+    set_config(
+        SimpleNamespace(
+            csm_version=2,
+            process_blocks_requests_per_second=None,
+        )
+    )
+    try:
+        subscription = ProbeSubscription(
+            AsyncWeb3(),
+            health=HealthState(),
+            contract_abis=get_contract_abis(2),
+        )
+        assert "Initialized" not in COMMUNITY_CATALOG_EVENTS_BY_VERSION[2]
+        decoded_event_names = {event_abi["name"] for event_abi in subscription.abi_by_topics.values()}
+        assert "Initialized" in decoded_event_names
+        assert "ELRewardsStealingPenaltyReported" in decoded_event_names
+        assert "ValidatorSlashingReported" in decoded_event_names
+    finally:
+        clear_config()
+
+
+def test_topics_to_follow_deduplicates_compatible_v2_v3_topics():
+    from sentinel.rpc import topics_to_follow
+
+    v2_event = {
+        "type": "event",
+        "name": "ValidatorExitDelayProcessed",
+        "inputs": [
+            {"name": "nodeOperatorId", "type": "uint256", "indexed": True},
+            {"name": "pubkey", "type": "bytes", "indexed": False},
+            {"name": "delayPenalty", "type": "uint256", "indexed": False},
+        ],
+        "anonymous": False,
+    }
+    v3_event = {
+        "type": "event",
+        "name": "ValidatorExitDelayProcessed",
+        "inputs": [
+            {"name": "nodeOperatorId", "type": "uint256", "indexed": True},
+            {"name": "pubkey", "type": "bytes", "indexed": False},
+            {"name": "delayFee", "type": "uint256", "indexed": False},
+        ],
+        "anonymous": False,
+    }
+
+    topics = topics_to_follow({"ValidatorExitDelayProcessed"}, [v2_event], [v3_event])
+
+    assert len(topics) == 1
+    [event_abi] = topics.values()
+    assert event_abi["inputs"][2]["name"] == "delayPenalty"
+
+
+def test_topics_to_follow_rejects_incompatible_same_topic_abis():
+    from sentinel.rpc import topics_to_follow
+
+    indexed_event = {
+        "type": "event",
+        "name": "SameTopic",
+        "inputs": [{"name": "value", "type": "uint256", "indexed": True}],
+        "anonymous": False,
+    }
+    non_indexed_event = {
+        "type": "event",
+        "name": "SameTopic",
+        "inputs": [{"name": "value", "type": "uint256", "indexed": False}],
+        "anonymous": False,
+    }
+
+    with pytest.raises(RuntimeError, match="incompatible ABI inputs"):
+        topics_to_follow({"SameTopic"}, [indexed_event], [non_indexed_event])
+
+
+@pytest.mark.asyncio
+async def test_initialized_control_event_switches_runtime_to_v3():
+    from sentinel.events import EventMessages, NotificationPlan
+    from sentinel.models import Event
+
+    switched_versions: list[int] = []
+
+    class DummyAdapter:
+        csm_version = 2
+
+        def catalog_events(self):
+            return set()
+
+        def notifiable_events(self):
+            return {"Initialized"}
+
+        async def event_enricher(self, event, messages):
+            return None
+
+    async def switch_csm_version(csm_version: int) -> None:
+        switched_versions.append(csm_version)
+
+    set_config(SimpleNamespace(module_ui_url="https://csm.lido.fi"))
+    try:
+        event_messages = EventMessages.__new__(EventMessages)
+        event_messages.connectProvider = _DummyConnectProvider()
+        event_messages.cfg = SimpleNamespace(etherscan_tx_url_template="https://etherscan.io/tx/{}")
+        event_messages.footer = EventMessages.footer.__get__(event_messages)
+        event_messages.module_adapter = DummyAdapter()
+        event_messages.module_address = "0x0000000000000000000000000000000000000abc"
+        event_messages._csm_version_switcher = switch_csm_version
+
+        event = Event(
+            event="Initialized",
+            args={"version": 3},
+            block=1,
+            tx=HexBytes("0xdeadbeef"),
+            address="0x0000000000000000000000000000000000000abc",
+        )
+
+        plan = await EventMessages.get_notification_plan(event_messages, event)
+
+        assert isinstance(plan, NotificationPlan)
+        assert "CSM v3 is live" in plan.broadcast
+        assert switched_versions == [3]
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_get_notification_plan_allows_v2_historical_event_with_v3_adapter():
+    from sentinel.events import EventMessages, NotificationPlan
+    from sentinel.models import Event
+    from sentinel.texts import COMMUNITY_NOTIFIABLE_EVENTS
+
+    class DummyAdapter:
+        csm_version = 3
+
+        def catalog_events(self):
+            return {"Initialized"}
+
+        def notifiable_events(self):
+            return COMMUNITY_NOTIFIABLE_EVENTS
+
+        async def event_enricher(self, event, messages):
+            return None
+
+    event_messages = EventMessages.__new__(EventMessages)
+    event_messages.connectProvider = _DummyConnectProvider()
+    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.cfg = SimpleNamespace(
+        etherscan_block_url_template="https://etherscan.io/block/{}",
+        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+    )
+    event_messages.footer = EventMessages.footer.__get__(event_messages)
+    event_messages.module_adapter = DummyAdapter()
+
+    event = Event(
+        event="ELRewardsStealingPenaltyReported",
+        args={
+            "nodeOperatorId": 321,
+            "stolenAmount": 10**18,
+            "proposedBlockHash": HexBytes("0x" + "12" * 32),
+        },
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await EventMessages.get_notification_plan(event_messages, event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids == {"321"}
+    assert "Penalty for stealing EL rewards reported" in plan.broadcast
 
 
 @pytest.mark.asyncio
@@ -515,6 +707,62 @@ async def test_validator_slashing_reported_handler_formats_pubkey_and_footer():
     assert "Key index: `7`" in message
     assert "nodeOperatorId: 42" in message
     assert "[Transaction](https://etherscan.io/tx/0xdeadbeef)" in message
+
+
+@pytest.mark.asyncio
+async def test_validator_exit_delay_processed_accepts_v3_delay_fee_arg():
+    from sentinel.events import EventMessages
+    from sentinel.models import Event
+
+    event_messages = EventMessages.__new__(EventMessages)
+    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.cfg = SimpleNamespace(
+        beaconchain_url_template="https://beaconcha.in/validator/{}",
+        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+    )
+    event_messages.footer = EventMessages.footer.__get__(event_messages)
+
+    event = Event(
+        event="ValidatorExitDelayProcessed",
+        args={"nodeOperatorId": 42, "pubkey": bytes.fromhex("1234"), "delayFee": 10**18},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    message = await EventMessages.validator_exit_delay_processed(event_messages, event)
+
+    assert "Validator exit delay processed" in message
+    assert "[0x1234](https://beaconcha.in/validator/0x1234)" in message
+    assert "Delay penalty: `1 ether`" in message
+
+
+@pytest.mark.asyncio
+async def test_validator_exit_delay_processed_keeps_v2_delay_penalty_arg():
+    from sentinel.events import EventMessages
+    from sentinel.models import Event
+
+    event_messages = EventMessages.__new__(EventMessages)
+    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.cfg = SimpleNamespace(
+        beaconchain_url_template="https://beaconcha.in/validator/{}",
+        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+    )
+    event_messages.footer = EventMessages.footer.__get__(event_messages)
+
+    event = Event(
+        event="ValidatorExitDelayProcessed",
+        args={"nodeOperatorId": 42, "pubkey": bytes.fromhex("1234"), "delayPenalty": 10**18},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    message = await EventMessages.validator_exit_delay_processed(event_messages, event)
+
+    assert "Validator exit delay processed" in message
+    assert "[0x1234](https://beaconcha.in/validator/0x1234)" in message
+    assert "Delay penalty: `1 ether`" in message
 
 
 @pytest.mark.asyncio
@@ -550,7 +798,12 @@ async def test_initialized_event_only_emits_for_v3_module():
     from sentinel.models import Event
 
     class DummyAdapter:
-        def allowed_events(self):
+        csm_version = 3
+
+        def catalog_events(self):
+            return {"Initialized"}
+
+        def notifiable_events(self):
             return {"Initialized"}
 
         async def event_enricher(self, event, messages):

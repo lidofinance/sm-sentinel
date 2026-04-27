@@ -256,10 +256,13 @@ COMMUNITY_V3_ONLY_EVENTS = {
     "Initialized",
 }
 
-COMMUNITY_ALLOWED_EVENTS_BY_VERSION: dict[int, set[str]] = {
+COMMUNITY_CATALOG_EVENTS_BY_VERSION: dict[int, set[str]] = {
     2: COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS,
     3: COMMUNITY_COMMON_EVENTS | COMMUNITY_V3_ONLY_EVENTS,
 }
+COMMUNITY_NOTIFIABLE_EVENTS = (
+    COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS | COMMUNITY_V3_ONLY_EVENTS
+)
 
 
 def _group_event_catalog() -> list[tuple[EventGroup, list[EventDefinition]]]:
@@ -269,7 +272,7 @@ def _group_event_catalog() -> list[tuple[EventGroup, list[EventDefinition]]]:
     return list(grouped.items())
 
 
-def build_event_list_text(allowed_events: set[str], module_ui_url: str | None = None) -> str:
+def build_event_list_text(catalog_events: set[str], module_ui_url: str | None = None) -> str:
     _ = module_ui_url
     parts: list = [
         "Here is the list of events you will receive notifications for:",
@@ -279,7 +282,7 @@ def build_event_list_text(allowed_events: set[str], module_ui_url: str | None = 
     ]
 
     for group_title, events in _group_event_catalog():
-        active_events = [event for event in events if event.name in allowed_events]
+        active_events = [event for event in events if event.name in catalog_events]
         if not active_events:
             continue
         parts.extend([Bold(group_title.value), nl(1)])
