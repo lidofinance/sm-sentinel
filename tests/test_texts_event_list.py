@@ -1,4 +1,4 @@
-from sentinel.texts import build_event_list_text
+from sentinel.modules.community.texts import build_event_list_text
 
 
 def test_build_event_list_text_for_common_group():

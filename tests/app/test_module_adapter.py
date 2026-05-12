@@ -1,9 +1,66 @@
+from dataclasses import fields, replace
+
 import pytest
 
 from sentinel.app.contracts import ContractAddresses
-from sentinel.app import module_adapter as adapter
+from sentinel.app.module_adapter import build_module_adapter_from_addresses
+from sentinel.chain import ConnectOnDemand
 from sentinel.models import get_contract_abis
 from sentinel.module_types import ModuleType
+from sentinel.modules.base import BaseModuleAdapter
+from sentinel.modules.texts import BotTexts
+from sentinel.modules.community.adapter import (
+    CommunityModuleAdapter,
+    CommunityModuleContracts,
+)
+from sentinel.modules.community.texts import CommunityTexts
+from sentinel.modules.curated.adapter import (
+    CuratedModuleAdapter,
+    CuratedModuleContracts,
+)
+from sentinel.modules.curated.texts import CuratedTexts
+
+
+class _FakeEth:
+    def contract(self, **kwargs):
+        return kwargs
+
+
+class _FakeW3:
+    eth = _FakeEth()
+
+
+class _FakeChain:
+    def __init__(self):
+        self.enter_count = 0
+        self.exit_count = 0
+
+    async def __aenter__(self):
+        self.enter_count += 1
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.exit_count += 1
+
+
+class _FakeCall:
+    def __init__(self, value):
+        self.value = value
+
+    async def call(self):
+        return self.value
+
+
+class _FakeModuleFunctions:
+    def __init__(self, node_operator_count: int):
+        self.node_operator_count = node_operator_count
+
+    def getNodeOperatorsCount(self):
+        return _FakeCall(self.node_operator_count)
+
+
+class _FakeModuleContract:
+    def __init__(self, node_operator_count: int):
+        self.functions = _FakeModuleFunctions(node_operator_count)
 
 
 def _dummy_addresses(module_type: ModuleType) -> ContractAddresses:
@@ -22,8 +79,8 @@ def _dummy_addresses(module_type: ModuleType) -> ContractAddresses:
     )
 
 
-def _dummy_contracts() -> adapter.ModuleContracts:
-    return adapter.ModuleContracts(
+def _dummy_contracts() -> CommunityModuleContracts:
+    return CommunityModuleContracts(
         module=object(),
         accounting=object(),
         parameters_registry=object(),
@@ -35,43 +92,76 @@ def _dummy_contracts() -> adapter.ModuleContracts:
     )
 
 
+def _dummy_chain() -> ConnectOnDemand:
+    return ConnectOnDemand(_FakeW3())
+
+
 def test_community_module_adapter_instantiation():
     addresses = _dummy_addresses(ModuleType.COMMUNITY)
     contracts = _dummy_contracts()
-    result = adapter.CommunityModuleAdapter(
+    result = CommunityModuleAdapter(
         addresses=addresses,
         contracts=contracts,
         contract_abis=get_contract_abis(addresses.csm_version),
         module_ui_url=None,
+        chain=_dummy_chain(),
     )
     assert result.module_type == ModuleType.COMMUNITY
 
 
 def test_curated_module_adapter_instantiation():
     addresses = _dummy_addresses(ModuleType.CURATED)
-    contracts = _dummy_contracts()
-    with pytest.raises(RuntimeError, match="Curated module adapter is not implemented"):
-        adapter.CuratedModuleAdapter(
-            addresses=addresses,
-            contracts=contracts,
-            contract_abis=get_contract_abis(addresses.csm_version),
-            module_ui_url=None,
-        )
+    contracts = CuratedModuleContracts(
+        module=object(),
+        accounting=object(),
+        parameters_registry=object(),
+        fee_distributor=object(),
+        exit_penalties=object(),
+        lido_locator=object(),
+        staking_router=object(),
+        vebo=object(),
+    )
+    result = CuratedModuleAdapter(
+        addresses=addresses,
+        contracts=contracts,
+        contract_abis=CuratedModuleAdapter.contract_abis_for(addresses),
+        module_ui_url=None,
+        chain=_dummy_chain(),
+    )
+    assert result.module_type == ModuleType.CURATED
+    assert result.catalog_events() == set()
+    assert result.notifiable_events() == set()
+
+
+def test_build_curated_module_adapter_uses_curated_module_abi():
+    addresses = _dummy_addresses(ModuleType.CURATED)
+    result = build_module_adapter_from_addresses(
+        addresses,
+        _FakeW3(),
+        module_ui_url=None,
+        chain=_dummy_chain(),
+    )
+
+    assert result.module_type == ModuleType.CURATED
+    assert result.contract_abis.module is CuratedModuleAdapter.contract_abis_for(addresses).module
 
 
 def test_adapter_build_event_list_text_filters_catalog_events():
-    class LimitedAdapter(adapter.BaseModuleAdapter):
+    class LimitedAdapter(BaseModuleAdapter):
+        module_type = ModuleType.COMMUNITY
+        texts = CommunityTexts
+
         def catalog_events(self) -> set[str]:
             return {"Initialized"}
 
     addresses = _dummy_addresses(ModuleType.COMMUNITY)
     contracts = _dummy_contracts()
     limited = LimitedAdapter(
-        module_type=ModuleType.COMMUNITY,
         addresses=addresses,
         contracts=contracts,
         contract_abis=get_contract_abis(addresses.csm_version),
         module_ui_url="https://example.invalid",
+        chain=_dummy_chain(),
     )
 
     text = limited.build_event_list_text()
@@ -96,17 +186,19 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
     addresses_v3 = _dummy_addresses(ModuleType.COMMUNITY)
 
     contracts = _dummy_contracts()
-    adapter_v2 = adapter.CommunityModuleAdapter(
+    adapter_v2 = CommunityModuleAdapter(
         addresses=addresses_v2,
         contracts=contracts,
         contract_abis=get_contract_abis(addresses_v2.csm_version),
         module_ui_url=None,
+        chain=_dummy_chain(),
     )
-    adapter_v3 = adapter.CommunityModuleAdapter(
+    adapter_v3 = CommunityModuleAdapter(
         addresses=addresses_v3,
         contracts=contracts,
         contract_abis=get_contract_abis(addresses_v3.csm_version),
         module_ui_url=None,
+        chain=_dummy_chain(),
     )
 
     assert "ELRewardsStealingPenaltyReported" in adapter_v2.catalog_events()
@@ -129,3 +221,58 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
     }
     assert new_v3_events.isdisjoint(adapter_v2.catalog_events())
     assert new_v3_events.issubset(adapter_v3.catalog_events())
+
+
+@pytest.mark.asyncio
+async def test_community_module_adapter_validates_operator_ids():
+    addresses = _dummy_addresses(ModuleType.COMMUNITY)
+    chain = _FakeChain()
+    contracts = _dummy_contracts()
+    contracts = replace(
+        contracts,
+        module=_FakeModuleContract(node_operator_count=3),
+    )
+    adapter = CommunityModuleAdapter(
+        addresses=addresses,
+        contracts=contracts,
+        contract_abis=get_contract_abis(addresses.csm_version),
+        module_ui_url=None,
+        chain=chain,
+    )
+
+    assert await adapter.is_valid_operator_id(0)
+    assert await adapter.is_valid_operator_id(2)
+    assert not await adapter.is_valid_operator_id(3)
+    assert not await adapter.is_valid_operator_id(-1)
+    assert chain.enter_count == 4
+    assert chain.exit_count == 4
+
+
+@pytest.mark.asyncio
+async def test_base_module_adapter_rejects_operator_ids_by_default():
+    addresses = _dummy_addresses(ModuleType.CURATED)
+    adapter = CuratedModuleAdapter(
+        addresses=addresses,
+        contracts=CuratedModuleContracts(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            fee_distributor=object(),
+            exit_penalties=object(),
+            lido_locator=object(),
+            staking_router=object(),
+            vebo=object(),
+        ),
+        contract_abis=CuratedModuleAdapter.contract_abis_for(addresses),
+        module_ui_url=None,
+        chain=_dummy_chain(),
+    )
+
+    assert not await adapter.is_valid_operator_id(0)
+
+
+def test_bot_text_instances_define_common_texts():
+    assert isinstance(CommunityTexts, BotTexts)
+    assert isinstance(CuratedTexts, BotTexts)
+    assert all(getattr(CommunityTexts, field.name) is not None for field in fields(BotTexts))
+    assert all(getattr(CuratedTexts, field.name) is not None for field in fields(BotTexts))

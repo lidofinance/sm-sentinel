@@ -19,15 +19,12 @@ from websockets import ConnectionClosed
 
 from sentinel.app.health import HealthState
 from sentinel.config import Config, get_config
-from sentinel.texts import COMMUNITY_NOTIFIABLE_EVENTS
 from sentinel.models import (
     Event,
     Block,
     ContractABIs,
-    CONTRACT_ABIS_V2,
-    CONTRACT_ABIS_V3,
-    get_contract_abis,
 )
+from sentinel.modules.base import EventSource, ModuleAdapter
 
 logger = logging.getLogger(__name__)
 logging.getLogger("web3.providers.persistent.subscription_manager").setLevel(logging.WARNING)
@@ -55,7 +52,7 @@ def topics_to_follow(event_names: set[str], *abis) -> dict:
     return topics
 
 
-def _event_decoder_shape(event_abi: dict) -> tuple[str, tuple[tuple[str, bool], ...]]:
+def _event_decoder_shape(event_abi: Any) -> tuple[str, tuple[tuple[str, bool], ...]]:
     return (
         event_abi["name"],
         tuple((item["type"], bool(item.get("indexed"))) for item in event_abi.get("inputs", [])),
@@ -68,7 +65,7 @@ class Subscription:
         w3: AsyncWeb3,
         *,
         health: HealthState,
-        contract_abis: ContractABIs,
+        module_adapter: ModuleAdapter,
         backfill_w3: AsyncWeb3 | None = None,
     ):
         super().__init__()
@@ -77,30 +74,33 @@ class Subscription:
         self._w3 = w3
         self._backfill_w3 = backfill_w3 or w3
         self.cfg: Config = get_config()
-        self.update_event_bindings(contract_abis)
+        self.reconfigure_module_adapter(module_adapter)
         self._health = health
         rps_limit = self.cfg.process_blocks_requests_per_second
         self._process_blocks_request_interval = (1 / rps_limit) if rps_limit else None
         self._last_process_blocks_request_ts: float | None = None
 
+    def reconfigure_module_adapter(self, module_adapter: ModuleAdapter) -> None:
+        self.module_adapter = module_adapter
+        self.update_event_bindings(
+            module_adapter.contract_abis,
+            notifiable_events=module_adapter.notifiable_events(),
+            event_sources=module_adapter.event_sources(),
+            topic_abis=module_adapter.topic_abis(),
+        )
+
     def update_event_bindings(
         self,
         contract_abis: ContractABIs,
+        *,
+        notifiable_events: set[str],
+        event_sources: tuple[EventSource, ...],
+        topic_abis: tuple[list[dict], ...],
     ) -> None:
         self.contract_abis = contract_abis
-        self.abi_by_topics = topics_to_follow(
-            COMMUNITY_NOTIFIABLE_EVENTS,
-            CONTRACT_ABIS_V2.module,
-            CONTRACT_ABIS_V3.module,
-            CONTRACT_ABIS_V2.accounting,
-            CONTRACT_ABIS_V3.accounting,
-            CONTRACT_ABIS_V2.fee_distributor,
-            CONTRACT_ABIS_V3.fee_distributor,
-            CONTRACT_ABIS_V2.vebo,
-            CONTRACT_ABIS_V3.vebo,
-            CONTRACT_ABIS_V2.exit_penalties,
-            CONTRACT_ABIS_V3.exit_penalties,
-        )
+        self.notifiable_events = notifiable_events
+        self.event_sources = event_sources
+        self.abi_by_topics = topics_to_follow(self.notifiable_events, *topic_abis)
 
     def start_catchup(self, until_block: int) -> None:
         """Hook for subclasses to prepare for catch-up/backfill mode.
@@ -130,6 +130,7 @@ class Subscription:
 
         async for w3 in self.w3:
             return await w3.eth.get_block_number()
+        raise RuntimeError("Web3 provider generator ended before returning a block number")
 
     @property
     async def w3(self):
@@ -183,14 +184,6 @@ class Subscription:
 
         self._shutdown_event.set()
 
-    @staticmethod
-    def _filter_vebo_exit_requests(event: Event):
-        cfg = get_config()
-        return (
-            cfg.staking_module_id is not None
-            and event.args["stakingModuleId"] == cfg.staking_module_id
-        )
-
     def _decode_event(self, w3: AsyncWeb3, event_abi: dict, log: dict[str, Any]) -> Event:
         event_data: EventData = get_event_data(w3.codec, event_abi, log)
         return Event(
@@ -218,31 +211,7 @@ class Subscription:
         if self._shutdown_event.is_set():
             return
         async for w3 in self.w3:
-            subs_module = LogsSubscription(
-                address=self.cfg.module_address, handler=self._handle_event_log_subscription
-            )
-            subs_acc = LogsSubscription(
-                address=self.cfg.accounting_address, handler=self._handle_event_log_subscription
-            )
-            subs_vebo = LogsSubscription(
-                address=self.cfg.vebo_address,
-                topics=self._topic_filter_for_events({"ValidatorExitRequest"}),
-                handler=self._handle_event_log_subscription,
-                handler_context={"predicate": self._filter_vebo_exit_requests},
-            )
-            subs_fd = LogsSubscription(
-                address=self.cfg.fee_distributor_address,
-                topics=self._topic_filter_for_events({"DistributionLogUpdated"}),
-                handler=self._handle_event_log_subscription,
-            )
-            subs_ep = LogsSubscription(
-                address=self.cfg.exit_penalties_address,
-                handler=self._handle_event_log_subscription,
-            )
-
-            await w3.subscription_manager.subscribe(
-                [subs_module, subs_acc, subs_vebo, subs_fd, subs_ep]
-            )
+            await w3.subscription_manager.subscribe(self._build_log_subscriptions())
             logger.info("Subscriptions started")
             self._subscriptions_started.set()
             self._health.mark_subscription_active()
@@ -263,31 +232,26 @@ class Subscription:
         batch_size = self.cfg.block_batch_size
         for batch_start in range(start_block, end_block + 1, batch_size):
             batch_end = min(batch_start + batch_size - 1, end_block)
-            contracts = [
-                self.cfg.module_address,
-                self.cfg.accounting_address,
-                self.cfg.fee_distributor_address,
-                self.cfg.vebo_address,
-                self.cfg.exit_penalties_address,
-            ]
 
-            for contract in contracts:
+            for source in self.event_sources:
                 logger.info(
                     "Fetching logs for %s blocks %s-%s",
-                    contract,
+                    source.address,
                     batch_start,
                     batch_end,
                 )
                 filter_params = FilterParams(
                     fromBlock=batch_start,
                     toBlock=batch_end,
-                    address=contract,
+                    address=source.address,
                 )
+                if source.event_names is not None:
+                    filter_params["topics"] = self._topic_filter_for_events(set(source.event_names))
                 try:
                     logs = await self._get_logs_with_retry(
                         w3=w3,
                         filter_params=filter_params,
-                        contract=contract,
+                        contract=source.address,
                         batch_start=batch_start,
                         batch_end=batch_end,
                     )
@@ -303,9 +267,7 @@ class Subscription:
                     if not event_abi:
                         continue
                     event = self._decode_event(w3, event_abi, log)
-                    if contract == self.cfg.vebo_address and not self._filter_vebo_exit_requests(
-                        event
-                    ):
+                    if source.predicate is not None and not source.predicate(event):
                         continue
                     await self.process_event_log(event)
                     await asyncio.sleep(0)
@@ -417,6 +379,25 @@ class Subscription:
         self._health.mark_progress()
         await self.process_event_log_from_subscription(event)
 
+    def _build_log_subscriptions(self) -> list[LogsSubscription]:
+        subscriptions = []
+        for source in self.event_sources:
+            handler_context = {}
+            if source.predicate is not None:
+                handler_context["predicate"] = source.predicate
+
+            kwargs: dict[str, Any] = {
+                "address": source.address,
+                "handler": self._handle_event_log_subscription,
+            }
+            if source.event_names is not None:
+                kwargs["topics"] = self._topic_filter_for_events(set(source.event_names))
+            if handler_context:
+                kwargs["handler_context"] = handler_context
+
+            subscriptions.append(LogsSubscription(**kwargs))
+        return subscriptions
+
     async def process_event_log(self, event: Event):
         raise NotImplementedError
 
@@ -438,13 +419,17 @@ class TerminalSubscription(Subscription):
 
 
 if __name__ == "__main__":
+    from sentinel.app.module_adapter import build_module_adapter_from_config
+    from sentinel.chain import ConnectOnDemand
+
     cfg = get_config()
     provider = AsyncWeb3(WebSocketProvider(os.getenv("WEB3_SOCKET_PROVIDER")))
+    module_adapter = build_module_adapter_from_config(cfg, provider, ConnectOnDemand(provider))
 
     asyncio.run(
         TerminalSubscription(
             provider,
             health=HealthState(),
-            contract_abis=get_contract_abis(cfg.csm_version),
+            module_adapter=module_adapter,
         ).subscribe()
     )

@@ -10,7 +10,6 @@ from web3 import AsyncHTTPProvider, AsyncWeb3, WebSocketProvider
 from web3.exceptions import TransactionNotFound
 from web3.types import RPCEndpoint, TxParams, TxReceipt
 
-from sentinel.events import EventMessages
 from sentinel.models import Block, Event
 from sentinel.app.health import HealthState
 from sentinel.rpc import Subscription
@@ -60,7 +59,7 @@ async def start_anvil(fork_block: int, port: int, fork_url: str) -> AnvilInstanc
         "--fork-url",
         fork_source,
         "--fork-block-number",
-        str(fork_block)
+        str(fork_block),
     ]
     process = await asyncio.create_subprocess_exec(*cmd)
     try:
@@ -68,7 +67,9 @@ async def start_anvil(fork_block: int, port: int, fork_url: str) -> AnvilInstanc
     except Exception:
         process.terminate()
         raise
-    return AnvilInstance(process=process, http_url=f"http://127.0.0.1:{port}", ws_url=f"ws://127.0.0.1:{port}")
+    return AnvilInstance(
+        process=process, http_url=f"http://127.0.0.1:{port}", ws_url=f"ws://127.0.0.1:{port}"
+    )
 
 
 async def stop_anvil(instance: AnvilInstance) -> None:
@@ -83,12 +84,13 @@ async def stop_anvil(instance: AnvilInstance) -> None:
 async def build_subscription(ws_url: str, http_url: str) -> "EventReplayHarness":
     from sentinel.config import get_config_async
     from sentinel.app.module_adapter import build_module_adapter_from_config
+    from sentinel.chain import ConnectOnDemand
 
     persistent_w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     backfill_w3 = AsyncWeb3(AsyncHTTPProvider(http_url))
     w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     cfg = await get_config_async()
-    module_adapter = build_module_adapter_from_config(cfg, w3)
+    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
     return EventReplayHarness(persistent_w3, w3, backfill_w3, module_adapter)
 
 
@@ -105,18 +107,22 @@ class EventReplayHarness(Subscription):
         super().__init__(
             persistent_w3,
             health=HealthState(),
-            contract_abis=module_adapter.contract_abis,
+            module_adapter=module_adapter,
             backfill_w3=backfill_w3,
         )
-        self.event_messages = EventMessages(w3, module_adapter, self.handle_csm_version_changed)
+        self.event_messages = module_adapter.build_event_messages(
+            w3, self.handle_csm_version_changed
+        )
         self.processed_events: list[tuple[Event, str]] = []
 
     async def handle_csm_version_changed(self, csm_version: int) -> None:
-        self.update_event_bindings(self.contract_abis)
+        self.reconfigure_module_adapter(self.module_adapter)
 
     async def process_event_log(self, event: Event):
         event.tx = HexBytes("0xdeadbeef")
-        self.processed_events.append((event, await self.event_messages.get_notification_plan(event)))
+        self.processed_events.append(
+            (event, await self.event_messages.get_notification_plan(event))
+        )
 
     async def process_new_block(self, block: Block):
         pass
@@ -172,10 +178,14 @@ async def replay_transaction_on_anvil(
     try:
         params = _build_replay_tx_params(tx)
         submitted_tx_hash = await local_w3.eth.send_transaction(params)
-        receipt = await local_w3.eth.wait_for_transaction_receipt(submitted_tx_hash, timeout=timeout)
+        receipt = await local_w3.eth.wait_for_transaction_receipt(
+            submitted_tx_hash, timeout=timeout
+        )
     finally:
         with suppress(Exception):
-            await local_w3.provider.make_request(RPCEndpoint("anvil_stopImpersonatingAccount"), [from_address])
+            await local_w3.provider.make_request(
+                RPCEndpoint("anvil_stopImpersonatingAccount"), [from_address]
+            )
 
     return receipt
 

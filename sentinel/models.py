@@ -2,7 +2,7 @@ import dataclasses
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
@@ -19,6 +19,7 @@ def _load_abi(name: str, *, version: int | None = None) -> list[dict]:
 
 MODULE_ABI_V2 = _load_abi("CSModuleV2.json")
 MODULE_ABI_V3 = _load_abi("CSModule.json", version=3)
+CURATED_MODULE_ABI = _load_abi("CuratedModule.json", version=3)
 
 ACCOUNTING_ABI_V2 = _load_abi("CSAccountingV2.json")
 ACCOUNTING_ABI_V3 = _load_abi("CSAccounting.json", version=3)
@@ -75,35 +76,22 @@ CONTRACT_ABIS_V3 = ContractABIs(
     vebo=VEBO_ABI,
 )
 
+CURATED_CONTRACT_ABIS = ContractABIs(
+    module=CURATED_MODULE_ABI,
+    accounting=ACCOUNTING_ABI_V3,
+    parameters_registry=PARAMETERS_REGISTRY_ABI_V3,
+    fee_distributor=FEE_DISTRIBUTOR_ABI_V3,
+    exit_penalties=EXIT_PENALTIES_ABI_V3,
+    lido_locator=LIDO_LOCATOR_ABI_V3,
+    staking_router=STAKING_ROUTER_ABI_V3,
+    vebo=VEBO_ABI,
+)
+
 
 def get_contract_abis(csm_version: int) -> ContractABIs:
     if csm_version == 3:
         return CONTRACT_ABIS_V3
     return CONTRACT_ABIS_V2
-
-
-DISCOVERY_MODULE_ABI = [
-    item for item in MODULE_ABI_V2
-    if item.get("type") == "function"
-    and item.get("name") in {
-        "ACCOUNTING",
-        "FEE_DISTRIBUTOR",
-        "EXIT_PENALTIES",
-        "LIDO_LOCATOR",
-        "PARAMETERS_REGISTRY",
-        "getInitializedVersion",
-        "getType",
-    }
-]
-DISCOVERY_LIDO_LOCATOR_ABI = [
-    item for item in LIDO_LOCATOR_ABI_V2
-    if item.get("type") == "function"
-    and item.get("name") in {"stakingRouter", "validatorsExitBusOracle"}
-]
-DISCOVERY_STAKING_ROUTER_ABI = [
-    item for item in STAKING_ROUTER_ABI_V2
-    if item.get("type") == "function" and item.get("name") == "getStakingModules"
-]
 
 
 @dataclasses.dataclass
@@ -123,14 +111,16 @@ class Event:
         args = ", ".join(f"{key}={value}" for key, value in self.args.items())
         return f"{self.event}({args})"
 
+
 @dataclasses.dataclass
 class EventHandler:
     """Dataclass to represent an event handler."""
+
     event: str
     handler: "EventHandlerFn"
 
 
 if TYPE_CHECKING:
-    from sentinel.events import EventMessages, NotificationPlan
+    from sentinel.notifications import NotificationPlan
 
-EventHandlerFn = Callable[["EventMessages", Event], Awaitable["NotificationPlan | str | None"]]
+EventHandlerFn = Callable[[Any, Event], Awaitable["NotificationPlan | str | None"]]

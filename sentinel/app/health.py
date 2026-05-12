@@ -88,7 +88,9 @@ class HealthState:
         with self._lock:
             self._last_heartbeat_at = self._clock()
 
-    async def heartbeat_loop(self, *, interval_seconds: float = HEALTH_HEARTBEAT_INTERVAL_SECONDS) -> None:
+    async def heartbeat_loop(
+        self, *, interval_seconds: float = HEALTH_HEARTBEAT_INTERVAL_SECONDS
+    ) -> None:
         while True:
             self.heartbeat()
             await asyncio.sleep(interval_seconds)
@@ -99,7 +101,9 @@ class HealthState:
             heartbeat_age = now - self._last_heartbeat_at
             progress_age = None if self._last_progress_at is None else now - self._last_progress_at
             subscription_age = (
-                None if self._last_subscription_ok_at is None else now - self._last_subscription_ok_at
+                None
+                if self._last_subscription_ok_at is None
+                else now - self._last_subscription_ok_at
             )
             live = self._fatal_error is None and heartbeat_age < LIVENESS_STALE_AFTER_SECONDS
             ready = (
@@ -136,7 +140,9 @@ class HealthServer:
         self._state = state
         self._server = ThreadingHTTPServer((host, port), self._build_handler())
         self._server.daemon_threads = True
-        self._thread = threading.Thread(target=self._server.serve_forever, name="health-server", daemon=True)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="health-server", daemon=True
+        )
 
     @property
     def port(self) -> int:

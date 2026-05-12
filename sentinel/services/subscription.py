@@ -17,7 +17,7 @@ logging.getLogger("web3.providers.WebSocketProvider").setLevel(logging.WARNING)
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
-    from sentinel.models import ContractABIs
+    from sentinel.modules.base import ModuleAdapter
 
 
 class TelegramSubscription(Subscription):
@@ -30,14 +30,14 @@ class TelegramSubscription(Subscription):
         event_messages,
         *,
         health: HealthState,
-        contract_abis: "ContractABIs",
+        module_adapter: "ModuleAdapter",
         backfill_w3=None,
     ) -> None:
         super().__init__(
             w3,
             health=health,
             backfill_w3=backfill_w3,
-            contract_abis=contract_abis,
+            module_adapter=module_adapter,
         )
         self.application = application
         self.event_messages = event_messages
@@ -57,19 +57,23 @@ class TelegramSubscription(Subscription):
 
         runtime = get_runtime_from_application(self.application)
         if runtime.module_adapter.csm_version == csm_version:
-            self.update_event_bindings(runtime.module_adapter.contract_abis)
+            self.reconfigure_module_adapter(runtime.module_adapter)
             return
 
         cfg = replace(runtime.config, csm_version=csm_version)
         set_config(cfg)
-        module_adapter = build_module_adapter_from_config(cfg, self.event_messages.w3)
+        module_adapter = build_module_adapter_from_config(
+            cfg,
+            self.event_messages.w3,
+            runtime.chain,
+        )
 
         runtime.config = cfg
         runtime.module_adapter = module_adapter
         self.cfg = cfg
         self.event_messages.cfg = cfg
         self.event_messages.reconfigure(module_adapter)
-        self.update_event_bindings(module_adapter.contract_abis)
+        self.reconfigure_module_adapter(module_adapter)
         logger.info("CSM runtime bindings switched to version %s", csm_version)
 
     async def _prepare_event_for_delivery(self, event: Event) -> None:

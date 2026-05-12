@@ -54,21 +54,24 @@ async def _exercise_event(
                 )
                 assert await _wait_for(
                     lambda: _has_expected_message(
-                        harness,
-                        event_name=event_name,
-                        expected_markdown=expected_markdown
+                        harness, event_name=event_name, expected_markdown=expected_markdown
                     )
-                ), (f"Did not find expected message for event {event_name}, \n"
+                ), (
+                    f"Did not find expected message for event {event_name}, \n"
                     f"{expected_markdown=}\n"
-                    f"found={[plan.broadcast if plan else None for event, plan in harness.processed_events]}")
+                    f"found={[plan.broadcast if plan else None for event, plan in harness.processed_events]}"
+                )
             finally:
                 harness._shutdown_event.set()
         else:
             await harness.process_blocks_from(fork_block - 1, fork_block)
-            assert _has_expected_message(harness, event_name=event_name, expected_markdown=expected_markdown), \
-                (f"Did not find expected message for event {event_name}, \n"
-                 f"{expected_markdown=}\n"
-                 f"found={[plan.broadcast if plan else None for event, plan in harness.processed_events]}")
+            assert _has_expected_message(
+                harness, event_name=event_name, expected_markdown=expected_markdown
+            ), (
+                f"Did not find expected message for event {event_name}, \n"
+                f"{expected_markdown=}\n"
+                f"found={[plan.broadcast if plan else None for event, plan in harness.processed_events]}"
+            )
 
     finally:
         await harness.disconnect()
@@ -76,7 +79,9 @@ async def _exercise_event(
             subscription_task.cancel()
 
 
-async def _wait_for(predicate: Callable[[], bool], *, timeout: float = 5.0, interval: float = 0.1) -> bool:
+async def _wait_for(
+    predicate: Callable[[], bool], *, timeout: float = 5.0, interval: float = 0.1
+) -> bool:
     deadline = asyncio.get_running_loop().time() + timeout
     while not predicate():
         if asyncio.get_running_loop().time() >= deadline:
@@ -85,12 +90,7 @@ async def _wait_for(predicate: Callable[[], bool], *, timeout: float = 5.0, inte
     return True
 
 
-def _has_expected_message(
-    harness,
-    *,
-    event_name: str,
-    expected_markdown: str | None
-) -> bool:
+def _has_expected_message(harness, *, event_name: str, expected_markdown: str | None) -> bool:
     messages = []
     for event, plan in harness.processed_events:
         if event is not None and event.event == event_name:
@@ -107,40 +107,48 @@ def via_subscription(request) -> bool:
     return request.param
 
 
-async def test_process_blocks_deposited_signing_keys_count_changed(anvil_launcher, via_subscription):
+async def test_process_blocks_deposited_signing_keys_count_changed(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="DepositedSigningKeysCountChanged",
         fork_block=1279457,
         tx_hash="0xb6be980ac363c47424f972576ae13f46cd41f86fac3157586553a77a063f1926",
-        expected_markdown='🤩 *Keys were deposited\\!*\n\nNew deposited keys count: 1\n\nnodeOperatorId: 299\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="🤩 *Keys were deposited\\!*\n\nNew deposited keys count: 1\n\nnodeOperatorId: 299\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-async def test_process_blocks_el_rewards_stealing_penalty_cancelled(anvil_launcher, via_subscription):
+async def test_process_blocks_el_rewards_stealing_penalty_cancelled(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="ELRewardsStealingPenaltyCancelled",
         fork_block=1129167,
         tx_hash="0xfdee52932e34aee4065258ab4f0a5cb5477c4ea24e10ce54a5389e11899fcf68",
-        expected_markdown='😮‍💨 *EL rewards stealing penalty cancelled*\n\nRemaining amount: `0\\.05 ether`\n\nnodeOperatorId: 1\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="😮‍💨 *EL rewards stealing penalty cancelled*\n\nRemaining amount: `0\\.05 ether`\n\nnodeOperatorId: 1\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-async def test_process_blocks_el_rewards_stealing_penalty_reported(anvil_launcher, via_subscription):
+async def test_process_blocks_el_rewards_stealing_penalty_reported(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="ELRewardsStealingPenaltyReported",
         fork_block=1129139,
         tx_hash="0x8e3882c7d5f778140e2e2faf0c4f9557e2e9de62e2af970e6479788b6ffe0b9e",
-        expected_markdown='🚨 *Penalty for stealing EL rewards reported*\n\n`2 ether` rewards from the [block](https://etherscan.io/block/0xe16e65e99b2a99e8d13fb574c50bea9f703eab51c858d7e692bf7fc8423b6c2c) were transferred to the wrong EL address\nSee the [guide](https://docs.lido.fi/staking-modules/csm/guides/mev-stealing) for more details\n\nnodeOperatorId: 0\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="🚨 *Penalty for stealing EL rewards reported*\n\n`2 ether` rewards from the [block](https://etherscan.io/block/0xe16e65e99b2a99e8d13fb574c50bea9f703eab51c858d7e692bf7fc8423b6c2c) were transferred to the wrong EL address\nSee the [guide](https://docs.lido.fi/staking-modules/csm/guides/mev-stealing) for more details\n\nnodeOperatorId: 0\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-@pytest.mark.skip(reason="TODO: investigate ELRewardsStealingPenaltySettled replay and update tx hash")
+@pytest.mark.skip(
+    reason="TODO: investigate ELRewardsStealingPenaltySettled replay and update tx hash"
+)
 async def test_process_blocks_el_rewards_stealing_penalty_settled(anvil_launcher, via_subscription):
     # TODO: investigate why the historical replay fails with "nonce too low" and
     #       update the transaction hash or replay logic before reenabling.
@@ -168,51 +176,59 @@ async def test_process_blocks_key_removal_charge_applied(anvil_launcher, via_sub
         event_name="KeyRemovalChargeApplied",
         fork_block=1270229,
         tx_hash="0xa4d75ba64584ddbadded5b4694ca72e2e6304fe7e7bdbe8f6cba304243d4c539",
-        expected_markdown='🔑 *Key removal charge applied*\n\nAmount of charge: `0\\.02 ether`\n\nnodeOperatorId: 296\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="🔑 *Key removal charge applied*\n\nAmount of charge: `0\\.02 ether`\n\nnodeOperatorId: 296\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-async def test_process_blocks_node_operator_manager_address_change_proposed(anvil_launcher, via_subscription):
+async def test_process_blocks_node_operator_manager_address_change_proposed(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="NodeOperatorManagerAddressChangeProposed",
         fork_block=1284172,
         tx_hash="0x0c0f3914c5634fdf51ad750a13d06820fcec957b70c8692c129f83554d29a114",
-        expected_markdown='ℹ️ *Proposed manager address revoked*\n\nnodeOperatorId: 83\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="ℹ️ *Proposed manager address revoked*\n\nnodeOperatorId: 83\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-async def test_process_blocks_node_operator_manager_address_changed(anvil_launcher, via_subscription):
+async def test_process_blocks_node_operator_manager_address_changed(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="NodeOperatorManagerAddressChanged",
         fork_block=1252972,
         tx_hash="0x884b24a8f2779acb9e74fb0ddc71dcad7d83a5ba850c311c4b3a6511b9cd1791",
-        expected_markdown='✅ *Manager address changed*\n\nNew address: `0xa8EF1c5ddb7efe11A0D0E896B1F1F118582395d4`\n\nnodeOperatorId: 239\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="✅ *Manager address changed*\n\nNew address: `0xa8EF1c5ddb7efe11A0D0E896B1F1F118582395d4`\n\nnodeOperatorId: 239\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-async def test_process_blocks_node_operator_reward_address_change_proposed(anvil_launcher, via_subscription):
+async def test_process_blocks_node_operator_reward_address_change_proposed(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="NodeOperatorRewardAddressChangeProposed",
         fork_block=1284204,
         tx_hash="0x5dbde52ae7df3da1394654267923892a887515e2bb0ae1d525748583e0ef36d5",
-        expected_markdown='ℹ️ *Proposed reward address revoked*\n\nnodeOperatorId: 83\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="ℹ️ *Proposed reward address revoked*\n\nnodeOperatorId: 83\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
 
 
-async def test_process_blocks_node_operator_reward_address_changed(anvil_launcher, via_subscription):
+async def test_process_blocks_node_operator_reward_address_changed(
+    anvil_launcher, via_subscription
+):
     await _exercise_event(
         event_name="NodeOperatorRewardAddressChanged",
         fork_block=1252969,
         tx_hash="0x294e7986fe8b8ccf196e8836eac788664405b6f9119927b3f605eb063641e294",
-        expected_markdown='✅ *Rewards address changed*\n\nNew address: `0xa8EF1c5ddb7efe11A0D0E896B1F1F118582395d4`\n\nnodeOperatorId: 239\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="✅ *Rewards address changed*\n\nNew address: `0xa8EF1c5ddb7efe11A0D0E896B1F1F118582395d4`\n\nnodeOperatorId: 239\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
@@ -223,7 +239,7 @@ async def test_process_blocks_vetted_signing_keys_count_decreased(anvil_launcher
         event_name="VettedSigningKeysCountDecreased",
         fork_block=1270156,
         tx_hash="0xbcbb7713a51ec2d3d93a4a693908f01afca482501474d80239602b3dcc42a231",
-        expected_markdown='🚨 *Vetted keys count decreased*\n\nConsider removing invalid keys\\. Check [CSM UI](https://csm.lido.fi) for more details\n\nnodeOperatorId: 296\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="🚨 *Vetted keys count decreased*\n\nConsider removing invalid keys\\. Check [CSM UI](https://csm.lido.fi) for more details\n\nnodeOperatorId: 296\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
@@ -254,7 +270,7 @@ async def test_process_blocks_validator_exit_delay_processed(anvil_launcher, via
         event_name="ValidatorExitDelayProcessed",
         fork_block=1124552,
         tx_hash="0x806f016399df457e27454a6cc3feef67c7f24264b2d66e1e56e9bf7f4fc7670c",
-        expected_markdown='🚨 *Validator exit delay processed*\n\nValidator: [0x8069c348ce982b1c66b68403f2061a33400f18188db89aa7f7335a4c5b0b674ef5f1a01e428006442c09cb24ad44b39e](https://beaconcha.in/validator/0x8069c348ce982b1c66b68403f2061a33400f18188db89aa7f7335a4c5b0b674ef5f1a01e428006442c09cb24ad44b39e)\nDelay penalty: `0\\.05 ether`\n\nPenalty will be applied when the validator exits\n\nnodeOperatorId: 242\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="🚨 *Validator exit delay processed*\n\nValidator: [0x8069c348ce982b1c66b68403f2061a33400f18188db89aa7f7335a4c5b0b674ef5f1a01e428006442c09cb24ad44b39e](https://beaconcha.in/validator/0x8069c348ce982b1c66b68403f2061a33400f18188db89aa7f7335a4c5b0b674ef5f1a01e428006442c09cb24ad44b39e)\nDelay penalty: `0\\.05 ether`\n\nPenalty will be applied when the validator exits\n\nnodeOperatorId: 242\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
@@ -265,7 +281,7 @@ async def test_process_blocks_total_signing_keys_count_changed(anvil_launcher, v
         event_name="TotalSigningKeysCountChanged",
         fork_block=1285083,
         tx_hash="0x83fe416f67366fcb2487abb593a854ba076ee337ba34a498d4d8b477e37f504a",
-        expected_markdown='👀 *New keys uploaded*\n\nKeys count: `0 \\-\\> 1`\n\nnodeOperatorId: 314\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="👀 *New keys uploaded*\n\nKeys count: `0 \\-\\> 1`\n\nnodeOperatorId: 314\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )
@@ -350,10 +366,10 @@ async def test_bond_curve_set(anvil_launcher, via_subscription):
         fork_block=1103471,
         tx_hash="0x4b6a752d52ff1e480ba51d0038f16b8a5e9c27bc0f3fd99aa09dff5401e97282",
         expected_markdown=(
-            'ℹ️ *Node Operator type changed*\n\nNew type id: `2`\n'
-            'Operational requirements may now differ\\. '
-            'Check the [CSM UI](https://csm.lido.fi) for updated guidance\n\n'
-            'nodeOperatorId: 234\n[Transaction](https://etherscan.io/tx/0xdeadbeef)'
+            "ℹ️ *Node Operator type changed*\n\nNew type id: `2`\n"
+            "Operational requirements may now differ\\. "
+            "Check the [CSM UI](https://csm.lido.fi) for updated guidance\n\n"
+            "nodeOperatorId: 234\n[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
@@ -365,7 +381,7 @@ async def test_process_blocks_target_validators_count_changed(anvil_launcher, vi
         event_name="TargetValidatorsCountChanged",
         fork_block=1084974,
         tx_hash="0xf920fb581bc3e69d5db7066aa905fbe8b3e62ca688cfb1c7b9dc2585f0652221",
-        expected_markdown='🚨 *Target validators count changed*\n\nThe limit has been set to zero\\.\nAll keys will be requested to exit immediately\\.\n\nnodeOperatorId: 242\n[Transaction](https://etherscan.io/tx/0xdeadbeef)',
+        expected_markdown="🚨 *Target validators count changed*\n\nThe limit has been set to zero\\.\nAll keys will be requested to exit immediately\\.\n\nnodeOperatorId: 242\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )

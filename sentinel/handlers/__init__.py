@@ -61,8 +61,12 @@ def build_conversation_handler() -> ConversationHandler:
             ],
             States.ADMIN: [
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
-                CallbackQueryHandler(subscriptions, pattern="^" + Callback.ADMIN_SUBSCRIPTIONS.value + "$"),
-                CallbackQueryHandler(broadcast_menu, pattern="^" + Callback.ADMIN_BROADCAST.value + "$"),
+                CallbackQueryHandler(
+                    subscriptions, pattern="^" + Callback.ADMIN_SUBSCRIPTIONS.value + "$"
+                ),
+                CallbackQueryHandler(
+                    broadcast_menu, pattern="^" + Callback.ADMIN_BROADCAST.value + "$"
+                ),
             ],
             States.ADMIN_BROADCAST: [
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
@@ -105,7 +109,9 @@ def register_handlers(runtime: BotRuntime) -> None:
 
     conversation_handler = build_conversation_handler()
 
-    application.add_handler(ChatMemberHandler(tracking.track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
+    application.add_handler(
+        ChatMemberHandler(tracking.track_chats, ChatMemberHandler.MY_CHAT_MEMBER)
+    )
     application.add_handler(conversation_handler)
     application.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, tracking.chat_migration))
     runtime.subscription.register_handlers()

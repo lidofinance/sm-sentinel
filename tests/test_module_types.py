@@ -1,4 +1,5 @@
 import pytest
+from hexbytes import HexBytes
 
 from sentinel.module_types import ModuleType, decode_module_type
 
@@ -13,9 +14,9 @@ def test_decode_module_type_bytes():
     assert decode_module_type(raw) == ModuleType.COMMUNITY
 
 
-def test_decode_module_type_hex_str():
-    raw = _bytes32(ModuleType.CURATED.value)
-    assert decode_module_type("0x" + raw.hex()) == ModuleType.CURATED
+def test_decode_module_type_hexbytes():
+    raw = HexBytes(_bytes32(ModuleType.CURATED.value))
+    assert decode_module_type(raw) == ModuleType.CURATED
 
 
 def test_decode_module_type_unknown():

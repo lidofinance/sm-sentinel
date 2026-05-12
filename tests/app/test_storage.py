@@ -13,6 +13,7 @@ from sentinel.app.storage import (
 
 # _ensure_int_set
 
+
 def test_ensure_int_set_none_returns_empty():
     assert ensure_int_set(None) == set()
 
@@ -44,6 +45,7 @@ def test_ensure_int_set_skips_non_convertible_items(caplog):
 
 # _normalise_node_operator_map
 
+
 def test_normalise_node_operator_map_basic_conversion():
     mapping = {"no": ["1", 2], 2: {3}}
     result = normalise_node_operator_map(mapping)
@@ -59,6 +61,7 @@ def test_normalise_node_operator_map_handles_invalid_mapping(caplog):
 
 # _normalise_node_operator_ids
 
+
 def test_normalise_node_operator_ids_filters_none():
     result = normalise_node_operator_ids(["1", 2, None])
     assert result == {"1", "2"}
@@ -72,6 +75,7 @@ def test_normalise_node_operator_ids_logs_on_invalid_iterable(caplog):
 
 
 # BlockState
+
 
 def test_block_state_defaults_and_updates():
     bot_data: dict[str, object] = {}
@@ -90,6 +94,7 @@ def test_block_state_defaults_and_updates():
 
 # ChatIdSet
 
+
 def test_chat_id_set_normalisation_and_mutations():
     bot_data: dict[str, object] = {"user_ids": {"1", 2, 3.0}}
     chat_ids = ChatIdSet(bot_data, "user_ids")
@@ -106,6 +111,7 @@ def test_chat_id_set_normalisation_and_mutations():
     snapshot.add(99)
     assert 99 not in chat_ids.all()
 
+
 def test_chat_id_set_migrate_chat_id_replaces_existing():
     bot_data: dict[str, object] = {"group_ids": {100}}
     chat_ids = ChatIdSet(bot_data, "group_ids")
@@ -113,6 +119,7 @@ def test_chat_id_set_migrate_chat_id_replaces_existing():
     assert chat_ids.migrate_chat_id(100, 200) is True
     assert chat_ids.contains(200)
     assert not chat_ids.contains(100)
+
 
 def test_chat_id_set_migrate_chat_id_noop_when_missing():
     bot_data: dict[str, object] = {"group_ids": {100}}
@@ -123,6 +130,7 @@ def test_chat_id_set_migrate_chat_id_noop_when_missing():
 
 
 # NodeOperatorChats
+
 
 def test_node_operator_chats_initial_normalisation():
     initial_mapping = {"1": ["10", 11], "empty": []}
@@ -149,6 +157,7 @@ def test_node_operator_chats_subscribe_unsubscribe_preserve_keys():
     chats.unsubscribe("alpha", 200)
     assert chats.ids() == {"alpha"}
     assert chats.chats_for("alpha") == set()
+
 
 def test_node_operator_chats_migrate_chat_id_updates_all_mappings():
     bot_data: dict[str, object] = {}
@@ -198,6 +207,7 @@ def test_node_operator_chats_subscription_counts_breakdown():
 
 # BotStorage
 
+
 def test_bot_storage_wrappers_use_underlying_helpers():
     bot_data: dict[str, object] = {}
     storage = BotStorage(bot_data)
@@ -218,6 +228,7 @@ def test_bot_storage_wrappers_use_underlying_helpers():
         "beta": {"total": 1, "users": 0, "groups": 1, "channels": 0},
     }
 
+
 def test_bot_storage_migrate_chat_id_updates_chat_sets_and_targets():
     bot_data: dict[str, object] = {
         "group_ids": {200},
@@ -235,6 +246,7 @@ def test_bot_storage_migrate_chat_id_updates_chat_sets_and_targets():
 
 # NodeOperatorSubscriptions
 
+
 def test_node_operator_subscriptions_follow_and_unfollow():
     chat_data: dict[str, object] = {"node_operators": ["1", 2, None]}
     subscriptions = NodeOperatorSubscriptions(chat_data)
@@ -250,6 +262,7 @@ def test_node_operator_subscriptions_follow_and_unfollow():
 
 
 # ChatStorage
+
 
 def test_chat_storage_exposes_node_operator_helper():
     chat_data: dict[str, object] = {}

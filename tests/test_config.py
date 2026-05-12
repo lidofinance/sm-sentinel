@@ -14,6 +14,7 @@ async def test_get_config_async_retries_when_rpc_times_out(monkeypatch, fake_con
     monkeypatch.setenv("MODULE_ADDRESS", "0x0000000000000000000000000000000000000001")
 
     attempts = 0
+
     async def fake_discover_contract_addresses(provider_url: str, module_address: str):
         nonlocal attempts
         attempts += 1
@@ -68,7 +69,9 @@ async def test_get_config_async_falls_back_to_csm_ui(monkeypatch, stub_discover_
 
 
 @pytest.mark.asyncio
-async def test_get_config_async_reads_healthcheck_envs(monkeypatch, stub_discover_contract_addresses):
+async def test_get_config_async_reads_healthcheck_envs(
+    monkeypatch, stub_discover_contract_addresses
+):
     clear_config()
 
     monkeypatch.setenv("WEB3_SOCKET_PROVIDER", "wss://example.invalid/ws")

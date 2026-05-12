@@ -131,7 +131,7 @@ Admins can broadcast messages via the in-bot Admin panel:
 End-to-end verification for on-chain events lives under `tests/integration`. Each
 scenario replays a real transaction through a lightweight harness that exposes the
 same `process_blocks_from` and `subscribe` entrypoints as the real subscription, allowing
-`EventMessages` to render the expected Markdown for every event.
+the module event message engine to render the expected Markdown for every event.
 
 To enable the suite:
 

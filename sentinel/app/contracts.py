@@ -6,11 +6,7 @@ from eth_typing import ChecksumAddress
 import web3.exceptions
 from web3 import WebSocketProvider, AsyncWeb3, AsyncHTTPProvider
 
-from sentinel.models import (
-    DISCOVERY_LIDO_LOCATOR_ABI,
-    DISCOVERY_MODULE_ABI,
-    DISCOVERY_STAKING_ROUTER_ABI,
-)
+from sentinel.models import CONTRACT_ABIS_V2
 from sentinel.module_types import ModuleType, decode_module_type
 
 logger = logging.getLogger(__name__)
@@ -57,7 +53,7 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
     checksum = w3.to_checksum_address
     module_contract = w3.eth.contract(
         address=checksum(module_address),
-        abi=DISCOVERY_MODULE_ABI,
+        abi=CONTRACT_ABIS_V2.module,
         decode_tuples=True,
     )
 
@@ -73,14 +69,14 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
 
     locator = w3.eth.contract(
         address=checksum(_ensure_address(lido_locator, "LIDO_LOCATOR")),
-        abi=DISCOVERY_LIDO_LOCATOR_ABI,
+        abi=CONTRACT_ABIS_V2.lido_locator,
     )
     vebo = await locator.functions.validatorsExitBusOracle().call()
     staking_router = await locator.functions.stakingRouter().call()
 
     staking_router_contract = w3.eth.contract(
         address=checksum(_ensure_address(staking_router, "stakingRouter")),
-        abi=DISCOVERY_STAKING_ROUTER_ABI,
+        abi=CONTRACT_ABIS_V2.staking_router,
     )
     modules = await staking_router_contract.functions.getStakingModules().call()
 
@@ -104,7 +100,9 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
     return addresses
 
 
-async def discover_contract_addresses_from_url(provider_url: str, module_address: str) -> ContractAddresses:
+async def discover_contract_addresses_from_url(
+    provider_url: str, module_address: str
+) -> ContractAddresses:
     w3 = await _build_web3(provider_url)
     return await discover_contract_addresses(w3, module_address)
 

@@ -9,6 +9,7 @@ import pytest
 import web3.exceptions
 from web3.types import FilterParams
 
+from sentinel.chain import ConnectOnDemand
 from sentinel.config import clear_config
 
 
@@ -78,7 +79,7 @@ def test_main_resolve_target_chats():
 
 def test_texts_manager_address_change_proposed_messages():
     from web3.constants import ADDRESS_ZERO
-    from sentinel.texts import node_operator_manager_address_change_proposed
+    from sentinel.modules.community.texts import node_operator_manager_address_change_proposed
 
     msg_revoked = node_operator_manager_address_change_proposed(ADDRESS_ZERO)
     assert "revoked" in msg_revoked
@@ -128,20 +129,27 @@ def test_config_parsing_and_templates(monkeypatch, stub_discover_contract_addres
     clear=True,
 )
 async def test_process_blocks_rate_limit(monkeypatch, stub_discover_contract_addresses):
+    from sentinel.app.module_adapter import build_module_adapter_from_config
     from sentinel.app.health import HealthState
     from sentinel.config import get_config_async
-    from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
+
+    class DummyEth:
+        def contract(self, **kwargs):
+            return SimpleNamespace(**kwargs)
 
     class DummyW3:
         provider = None
+        eth = DummyEth()
 
     clear_config()
-    await get_config_async()
+    cfg = await get_config_async()
+    w3 = DummyW3()
+    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
     subscription = Subscription(
-        DummyW3(),
+        w3,
         health=HealthState(),
-        contract_abis=get_contract_abis(2),
+        module_adapter=module_adapter,
     )
     try:
         start = asyncio.get_running_loop().time()
@@ -184,6 +192,75 @@ async def test_get_block_number_uses_persistent_provider():
 
 
 @pytest.mark.asyncio
+async def test_process_blocks_from_uses_event_source_filters():
+    from sentinel.models import Block, Event
+    from sentinel.modules.base import EventSource
+    from sentinel.rpc import Subscription
+
+    topic = HexBytes("0x" + "01" * 32)
+
+    class ProbeSubscription(Subscription):
+        async def process_event_log(self, event: Event):
+            self.events.append(event)
+
+        async def process_new_block(self, block: Block):
+            self.blocks.append(block.number)
+
+    subscription = ProbeSubscription.__new__(ProbeSubscription)
+    subscription._backfill_w3 = SimpleNamespace(
+        provider=SimpleNamespace(
+            is_connected=AsyncMock(return_value=True),
+            connect=AsyncMock(),
+        ),
+        eth=SimpleNamespace(),
+    )
+    subscription.cfg = SimpleNamespace(block_batch_size=1000)
+    subscription.event_sources = (
+        EventSource(
+            "scoped",
+            "0x0000000000000000000000000000000000000001",
+            frozenset({"ScopedEvent"}),
+            lambda event: event.args["keep"],
+        ),
+    )
+    subscription.abi_by_topics = {topic: {"name": "ScopedEvent"}}
+    subscription._shutdown_event = asyncio.Event()
+    subscription._process_blocks_request_interval = None
+    subscription._health = SimpleNamespace(mark_progress=lambda: None)
+    subscription.events = []
+    subscription.blocks = []
+    subscription._get_logs_with_retry = AsyncMock(
+        return_value=[{"topics": [topic]}, {"topics": [topic]}]
+    )
+
+    decoded_events = [
+        Event(
+            event="ScopedEvent",
+            args={"keep": False},
+            block=1,
+            tx=HexBytes("0xdeadbeef"),
+            address="0x0000000000000000000000000000000000000001",
+        ),
+        Event(
+            event="ScopedEvent",
+            args={"keep": True},
+            block=1,
+            tx=HexBytes("0xdeadbeef"),
+            address="0x0000000000000000000000000000000000000001",
+        ),
+    ]
+    subscription._decode_event = lambda w3, event_abi, log: decoded_events.pop(0)
+
+    await subscription.process_blocks_from(1, 2)
+
+    filter_params = subscription._get_logs_with_retry.await_args.kwargs["filter_params"]
+    assert filter_params["address"] == "0x0000000000000000000000000000000000000001"
+    assert filter_params["topics"] == [topic]
+    assert [event.args["keep"] for event in subscription.events] == [True]
+    assert subscription.blocks == [2]
+
+
+@pytest.mark.asyncio
 @patch.dict(
     os.environ,
     {
@@ -196,20 +273,28 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
     monkeypatch,
     stub_discover_contract_addresses,
 ):
+    from sentinel.app.module_adapter import build_module_adapter_from_config
     from sentinel.config import get_config_async
     from sentinel.app.health import HealthState
-    from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
+
+    class DummyEth:
+        def contract(self, **kwargs):
+            return SimpleNamespace(**kwargs)
+
     class DummyW3:
         provider = None
+        eth = DummyEth()
 
     clear_config()
-    await get_config_async()
+    cfg = await get_config_async()
+    w3 = DummyW3()
+    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
 
     subscription = Subscription(
-        DummyW3(),
+        w3,
         health=HealthState(),
-        contract_abis=get_contract_abis(2),
+        module_adapter=module_adapter,
     )
     rate_limit_error = web3.exceptions.Web3RPCError(
         message="{'code': 429, 'message': 'throughput exceeded'}",
@@ -250,20 +335,28 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
     monkeypatch,
     stub_discover_contract_addresses,
 ):
+    from sentinel.app.module_adapter import build_module_adapter_from_config
     from sentinel.config import get_config_async
     from sentinel.app.health import HealthState
-    from sentinel.models import get_contract_abis
     from sentinel.rpc import Subscription
+
+    class DummyEth:
+        def contract(self, **kwargs):
+            return SimpleNamespace(**kwargs)
+
     class DummyW3:
         provider = None
+        eth = DummyEth()
 
     clear_config()
-    await get_config_async()
+    cfg = await get_config_async()
+    w3 = DummyW3()
+    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
 
     subscription = Subscription(
-        DummyW3(),
+        w3,
         health=HealthState(),
-        contract_abis=get_contract_abis(2),
+        module_adapter=module_adapter,
     )
     fatal_error = web3.exceptions.Web3RPCError(
         message="execution reverted",

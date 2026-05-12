@@ -164,7 +164,9 @@ def get_config() -> Config:
         except RuntimeError:
             _CONFIG = asyncio.run(_build_config_from_env())
         else:
-            raise RuntimeError("get_config() cannot be called from an async context, use get_config_async() instead")
+            raise RuntimeError(
+                "get_config() cannot be called from an async context, use get_config_async() instead"
+            )
     return _CONFIG
 
 

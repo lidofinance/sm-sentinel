@@ -1,217 +1,54 @@
-from dataclasses import dataclass
-from collections.abc import Awaitable, Callable
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from web3 import AsyncWeb3
 
-from sentinel.app.contracts import ContractAddresses, discover_contract_addresses, _build_web3
-from sentinel.models import (
-    ContractABIs,
-    get_contract_abis,
-)
+from sentinel.app.contracts import ContractAddresses
+from sentinel.chain import ConnectOnDemand
 from sentinel.module_types import ModuleType
-from sentinel.texts import (
-    COMMUNITY_CATALOG_EVENTS_BY_VERSION,
-    COMMUNITY_NOTIFIABLE_EVENTS,
-    build_event_list_text,
-)
+from sentinel.modules.base import ModuleAdapter
+from sentinel.modules.community.adapter import CommunityModuleAdapter
+from sentinel.modules.curated.adapter import CuratedModuleAdapter
 
 if TYPE_CHECKING:
     from sentinel.config import Config
-    from sentinel.events import EventMessages, NotificationPlan
-    from sentinel.models import Event
 
-EventHandler = Callable[["EventMessages", "Event"], Awaitable["NotificationPlan | str | None"]]
-
-
-@dataclass(frozen=True, slots=True)
-class ModuleContracts:
-    module: Any
-    accounting: Any
-    parameters_registry: Any
-    fee_distributor: Any
-    exit_penalties: Any
-    lido_locator: Any
-    staking_router: Any
-    vebo: Any
+__all__ = [
+    "build_module_adapter_from_addresses",
+    "build_module_adapter_from_config",
+]
 
 
-class ModuleAdapter(Protocol):
-    module_type: ModuleType
-    addresses: ContractAddresses
-    contracts: ModuleContracts
-    contract_abis: ContractABIs
-    module_ui_url: str | None
-    csm_version: int
-
-    def catalog_events(self) -> set[str]:
-        ...
-
-    def notifiable_events(self) -> set[str]:
-        ...
-
-    def build_event_list_text(self) -> str:
-        ...
-
-    def get_event_handler(self, event_name: str) -> EventHandler | None:
-        ...
-
-    async def event_enricher(
-        self,
-        event: "Event",
-        messages: "EventMessages",
-    ) -> "NotificationPlan | str | None":
-        ...
-
-
-class BaseModuleAdapter:
-    def __init__(
-        self,
-        *,
-        module_type: ModuleType,
-        addresses: ContractAddresses,
-        contracts: ModuleContracts,
-        module_ui_url: str | None,
-        contract_abis: ContractABIs,
-        event_handlers: dict[str, EventHandler] | None = None,
-    ) -> None:
-        self.module_type = module_type
-        self.addresses = addresses
-        self.contracts = contracts
-        self.contract_abis = contract_abis
-        self.module_ui_url = module_ui_url
-        self.csm_version = addresses.csm_version
-        self._event_handlers = event_handlers or {}
-
-    def catalog_events(self) -> set[str]:
-        return COMMUNITY_CATALOG_EVENTS_BY_VERSION.get(
-            self.csm_version,
-            COMMUNITY_CATALOG_EVENTS_BY_VERSION[3],
-        )
-
-    def notifiable_events(self) -> set[str]:
-        return COMMUNITY_NOTIFIABLE_EVENTS
-
-    def build_event_list_text(self) -> str:
-        return build_event_list_text(self.catalog_events(), self.module_ui_url)
-
-    def get_event_handler(self, event_name: str) -> EventHandler | None:
-        return self._event_handlers.get(event_name)
-
-    async def event_enricher(
-        self,
-        event: "Event",
-        messages: "EventMessages",
-    ) -> "NotificationPlan | str | None":
-        handler = self.get_event_handler(event.event)
-        if handler is None:
-            return None
-        return await handler(messages, event)
-
-
-class CommunityModuleAdapter(BaseModuleAdapter):
-    def __init__(
-        self,
-        *,
-        addresses: ContractAddresses,
-        contracts: ModuleContracts,
-        module_ui_url: str | None,
-        contract_abis: ContractABIs,
-    ) -> None:
-        if addresses.module_type != ModuleType.COMMUNITY:
-            raise RuntimeError(
-                f"Expected community module, got {addresses.module_type!s}"
-            )
-        super().__init__(
-            module_type=ModuleType.COMMUNITY,
-            addresses=addresses,
-            contracts=contracts,
-            module_ui_url=module_ui_url,
-            contract_abis=contract_abis,
-        )
-
-
-class CuratedModuleAdapter(BaseModuleAdapter):
-    def __init__(
-        self,
-        *,
-        addresses: ContractAddresses,
-        contracts: ModuleContracts,
-        module_ui_url: str | None,
-        contract_abis: ContractABIs,
-    ) -> None:
-        raise RuntimeError("Curated module adapter is not implemented yet.")
-
-
-def build_module_contracts(
-    w3: AsyncWeb3,
-    addresses: ContractAddresses,
-    contract_abis: ContractABIs,
-) -> ModuleContracts:
-    return ModuleContracts(
-        module=w3.eth.contract(
-            address=addresses.module,
-            abi=contract_abis.module,
-            decode_tuples=True,
-        ),
-        accounting=w3.eth.contract(
-            address=addresses.accounting,
-            abi=contract_abis.accounting,
-            decode_tuples=True,
-        ),
-        parameters_registry=w3.eth.contract(
-            address=addresses.parameters_registry,
-            abi=contract_abis.parameters_registry,
-            decode_tuples=True,
-        ),
-        fee_distributor=w3.eth.contract(
-            address=addresses.fee_distributor,
-            abi=contract_abis.fee_distributor,
-        ),
-        exit_penalties=w3.eth.contract(
-            address=addresses.exit_penalties,
-            abi=contract_abis.exit_penalties,
-        ),
-        lido_locator=w3.eth.contract(
-            address=addresses.lido_locator,
-            abi=contract_abis.lido_locator,
-        ),
-        staking_router=w3.eth.contract(
-            address=addresses.staking_router,
-            abi=contract_abis.staking_router,
-        ),
-        vebo=w3.eth.contract(
-            address=addresses.vebo,
-            abi=contract_abis.vebo,
-        ),
-    )
+def _adapter_class_for(module_type: ModuleType):
+    if module_type == ModuleType.COMMUNITY:
+        return CommunityModuleAdapter
+    if module_type == ModuleType.CURATED:
+        return CuratedModuleAdapter
+    raise RuntimeError(f"Unsupported module type: {module_type!s}")
 
 
 def build_module_adapter_from_addresses(
     addresses: ContractAddresses,
     w3: AsyncWeb3,
     module_ui_url: str | None,
+    chain: ConnectOnDemand,
 ) -> ModuleAdapter:
-    contract_abis = get_contract_abis(addresses.csm_version)
-    contracts = build_module_contracts(w3, addresses, contract_abis)
-    if addresses.module_type == ModuleType.COMMUNITY:
-        return CommunityModuleAdapter(
-            addresses=addresses,
-            contracts=contracts,
-            contract_abis=contract_abis,
-            module_ui_url=module_ui_url,
-        )
-    if addresses.module_type == ModuleType.CURATED:
-        return CuratedModuleAdapter(
-            addresses=addresses,
-            contracts=contracts,
-            contract_abis=contract_abis,
-            module_ui_url=module_ui_url,
-        )
-    raise RuntimeError(f"Unsupported module type: {addresses.module_type!s}")
+    adapter_class = _adapter_class_for(addresses.module_type)
+    contract_abis = adapter_class.contract_abis_for(addresses)
+    contracts = adapter_class.build_contracts(w3, addresses, contract_abis)
+    return adapter_class(
+        addresses=addresses,
+        contracts=contracts,
+        contract_abis=contract_abis,
+        module_ui_url=module_ui_url,
+        chain=chain,
+    )
 
 
-def build_module_adapter_from_config(cfg: "Config", w3: AsyncWeb3) -> ModuleAdapter:
+def build_module_adapter_from_config(
+    cfg: "Config",
+    w3: AsyncWeb3,
+    chain: ConnectOnDemand,
+) -> ModuleAdapter:
     addresses = ContractAddresses(
         module=cfg.module_address,
         accounting=cfg.accounting_address,
@@ -225,16 +62,4 @@ def build_module_adapter_from_config(cfg: "Config", w3: AsyncWeb3) -> ModuleAdap
         module_type=cfg.module_type,
         csm_version=cfg.csm_version,
     )
-    return build_module_adapter_from_addresses(addresses, w3, cfg.module_ui_url)
-
-
-async def build_module_adapter(
-    provider_url: str,
-    module_address: str,
-    module_ui_url: str | None = None,
-    w3: AsyncWeb3 | None = None,
-) -> ModuleAdapter:
-    if w3 is None:
-        w3 = await _build_web3(provider_url)
-    addresses = await discover_contract_addresses(w3, module_address)
-    return build_module_adapter_from_addresses(addresses, w3, module_ui_url)
+    return build_module_adapter_from_addresses(addresses, w3, cfg.module_ui_url, chain)

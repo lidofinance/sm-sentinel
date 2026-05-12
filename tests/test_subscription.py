@@ -5,6 +5,7 @@ from hexbytes import HexBytes
 import pytest
 
 from sentinel.app.health import HealthState
+from sentinel.chain import ConnectOnDemand
 from sentinel.config import Config, clear_config, set_config
 from sentinel.module_types import ModuleType
 from sentinel.app.storage import BotStorage
@@ -95,15 +96,15 @@ def _make_subscription(event_messages_return=None) -> TelegramSubscription:
 @pytest.mark.asyncio
 async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
     from sentinel.app.module_adapter import build_module_adapter_from_config
-    from sentinel.models import get_contract_abis
 
     cfg = _make_config(csm_version=2)
     w3 = _FakeW3()
     set_config(cfg)
     try:
-        module_adapter = build_module_adapter_from_config(cfg, w3)
+        chain = ConnectOnDemand(w3)
+        module_adapter = build_module_adapter_from_config(cfg, w3, chain)
         application = SimpleNamespace()
-        runtime = SimpleNamespace(config=cfg, module_adapter=module_adapter)
+        runtime = SimpleNamespace(config=cfg, module_adapter=module_adapter, chain=chain)
         setattr(application, "_module_runtime", runtime)
 
         event_messages = _FakeEventMessages(w3)
@@ -112,7 +113,7 @@ async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
             application,
             event_messages,
             health=HealthState(),
-            contract_abis=get_contract_abis(2),
+            module_adapter=module_adapter,
         )
 
         await subscription.handle_csm_version_changed(3)

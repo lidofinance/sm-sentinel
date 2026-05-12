@@ -6,10 +6,11 @@ from sentinel.config import Config
 if TYPE_CHECKING:
     from telegram.ext import Application
 
-    from sentinel.events import EventMessages
     from sentinel.app.health import HealthServer, HealthState
+    from sentinel.chain import ConnectOnDemand
     from sentinel.jobs import JobContext
-    from sentinel.app.module_adapter import ModuleAdapter
+    from sentinel.notifications import EventMessageEngine
+    from sentinel.modules.base import ModuleAdapter
     from sentinel.services.subscription import TelegramSubscription
 
 
@@ -23,9 +24,10 @@ class BotRuntime:
     config: Config
     application: "Application"
     subscription: "TelegramSubscription"
-    event_messages: "EventMessages"
+    event_messages: "EventMessageEngine"
     job_context: "JobContext"
     module_adapter: "ModuleAdapter"
+    chain: "ConnectOnDemand"
     health: "HealthState"
     health_server: "HealthServer"
 
