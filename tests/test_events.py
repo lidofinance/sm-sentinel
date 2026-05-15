@@ -127,8 +127,6 @@ class _FakeParametersRegistry:
 
 
 class _FakeCuratedAdapter:
-    csm_version = 3
-
     def __init__(self, *, contracts=None, notifiable_events: set[str] | None = None):
         self.chain = _DummyConnectProvider()
         self.addresses = SimpleNamespace(

@@ -31,7 +31,6 @@ class ModuleAdapter(Protocol):
     chain: ConnectOnDemand
     texts: BotTexts
     module_ui_url: str | None
-    csm_version: int
 
     def catalog_events(self) -> set[str]: ...
 
@@ -68,7 +67,6 @@ class BaseModuleAdapter:
         self.contract_abis = contract_abis
         self.chain = chain
         self.module_ui_url = module_ui_url
-        self.csm_version = addresses.csm_version
 
     def catalog_events(self) -> set[str]:
         raise NotImplementedError

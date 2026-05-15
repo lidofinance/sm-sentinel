@@ -79,14 +79,13 @@ def _dummy_addresses(module_type: ModuleType) -> ContractAddresses:
         "vebo": "0x0000000000000000000000000000000000000008",
         "staking_module_id": 1,
         "module_type": module_type,
-        "csm_version": 3,
     }
     if module_type == ModuleType.CURATED:
         return CuratedContractAddresses(
             **common_kwargs,
             meta_registry="0x0000000000000000000000000000000000000009",
         )
-    return CommunityContractAddresses(**common_kwargs)
+    return CommunityContractAddresses(**common_kwargs, csm_version=3)
 
 
 def _dummy_contracts() -> CommunityModuleContracts:
@@ -108,6 +107,7 @@ def _dummy_chain() -> ConnectOnDemand:
 
 def test_community_module_adapter_instantiation():
     addresses = _dummy_addresses(ModuleType.COMMUNITY)
+    assert isinstance(addresses, CommunityContractAddresses)
     contracts = _dummy_contracts()
     result = CommunityModuleAdapter(
         addresses=addresses,
@@ -121,6 +121,7 @@ def test_community_module_adapter_instantiation():
 
 def test_curated_module_adapter_instantiation():
     addresses = _dummy_addresses(ModuleType.CURATED)
+    assert isinstance(addresses, CuratedContractAddresses)
     contracts = CuratedModuleContracts(
         module=object(),
         accounting=object(),
@@ -140,6 +141,7 @@ def test_curated_module_adapter_instantiation():
         chain=_dummy_chain(),
     )
     assert result.module_type == ModuleType.CURATED
+    assert not hasattr(result, "csm_version")
     assert "DepositedSigningKeysCountChanged" in result.catalog_events()
     assert "OperatorGroupCreated" in result.catalog_events()
     assert result.catalog_events() == result.notifiable_events()
@@ -147,6 +149,7 @@ def test_curated_module_adapter_instantiation():
 
 def test_build_curated_module_adapter_uses_curated_module_abi():
     addresses = _dummy_addresses(ModuleType.CURATED)
+    assert isinstance(addresses, CuratedContractAddresses)
     result = build_module_adapter_from_addresses(
         addresses,
         _FakeW3(),
@@ -167,6 +170,7 @@ def test_adapter_build_event_list_text_filters_catalog_events():
             return {"Initialized"}
 
     addresses = _dummy_addresses(ModuleType.COMMUNITY)
+    assert isinstance(addresses, CommunityContractAddresses)
     contracts = _dummy_contracts()
     limited = LimitedAdapter(
         addresses=addresses,
@@ -196,6 +200,7 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
         csm_version=2,
     )
     addresses_v3 = _dummy_addresses(ModuleType.COMMUNITY)
+    assert isinstance(addresses_v3, CommunityContractAddresses)
 
     contracts = _dummy_contracts()
     adapter_v2 = CommunityModuleAdapter(
@@ -238,6 +243,7 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
 @pytest.mark.asyncio
 async def test_community_module_adapter_validates_operator_ids():
     addresses = _dummy_addresses(ModuleType.COMMUNITY)
+    assert isinstance(addresses, CommunityContractAddresses)
     chain = _FakeChain()
     contracts = _dummy_contracts()
     contracts = replace(
@@ -263,6 +269,7 @@ async def test_community_module_adapter_validates_operator_ids():
 @pytest.mark.asyncio
 async def test_curated_module_adapter_validates_operator_ids():
     addresses = _dummy_addresses(ModuleType.CURATED)
+    assert isinstance(addresses, CuratedContractAddresses)
     chain = _FakeChain()
     adapter = CuratedModuleAdapter(
         addresses=addresses,

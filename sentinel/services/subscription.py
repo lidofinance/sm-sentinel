@@ -52,10 +52,21 @@ class TelegramSubscription(Subscription):
         self._ignore_subscription_events_until_block = None
 
     async def handle_csm_version_changed(self, csm_version: int) -> None:
+        from sentinel.app.contracts import CommunityContractAddresses
         from sentinel.app.module_adapter import build_module_adapter_from_config
         from sentinel.app.runtime import get_runtime_from_application
+        from sentinel.modules.community.adapter import CommunityModuleAdapter
 
         runtime = get_runtime_from_application(self.application)
+        if not isinstance(
+            runtime.config.contract_addresses, CommunityContractAddresses
+        ) or not isinstance(runtime.module_adapter, CommunityModuleAdapter):
+            logger.warning(
+                "Ignoring CSM version change for non-community module",
+                extra={"module_type": runtime.config.contract_addresses.module_type.value},
+            )
+            return
+
         if runtime.module_adapter.csm_version == csm_version:
             self.reconfigure_module_adapter(runtime.module_adapter)
             return

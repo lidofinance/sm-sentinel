@@ -127,7 +127,6 @@ class BaseContractAddresses:
     vebo: ChecksumAddress
     staking_module_id: int
     module_type: ModuleType
-    csm_version: int
 
     def as_dict(self) -> dict[str, str | int]:
         return {
@@ -141,13 +140,15 @@ class BaseContractAddresses:
             "vebo": self.vebo,
             "staking_module_id": self.staking_module_id,
             "module_type": self.module_type.value,
-            "csm_version": self.csm_version,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class CommunityContractAddresses(BaseContractAddresses):
-    pass
+    csm_version: int
+
+    def as_dict(self) -> dict[str, str | int]:
+        return BaseContractAddresses.as_dict(self) | {"csm_version": self.csm_version}
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +177,6 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
 
     module_type_raw = await module_contract.functions.getType().call()
     module_type = decode_module_type(module_type_raw)
-    csm_version = await _discover_csm_version(module_contract)
 
     accounting = await module_contract.functions.ACCOUNTING().call()
     parameters_registry = await module_contract.functions.PARAMETERS_REGISTRY().call()
@@ -223,10 +223,10 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
             vebo=vebo_checksum,
             staking_module_id=module_id,
             module_type=module_type,
-            csm_version=csm_version,
             meta_registry=checksum(_ensure_address(meta_registry, "META_REGISTRY()")),
         )
     else:
+        csm_version = await _discover_csm_version(module_contract)
         addresses = CommunityContractAddresses(
             module=module_checksum,
             accounting=accounting_checksum,

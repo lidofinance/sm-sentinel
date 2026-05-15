@@ -8,7 +8,6 @@ from sentinel.app.contracts import (
     CONTRACT_ABIS_V3,
     CommunityContractAddresses,
     CommunityContractABIs,
-    ContractAddresses,
 )
 from sentinel.chain import ConnectOnDemand
 from sentinel.models import Event
@@ -109,9 +108,10 @@ class CommunityModuleAdapter(BaseModuleAdapter):
             contract_abis=contract_abis,
             chain=chain,
         )
+        self.csm_version = addresses.csm_version
 
     @staticmethod
-    def contract_abis_for(addresses: ContractAddresses) -> CommunityContractABIs:
+    def contract_abis_for(addresses: CommunityContractAddresses) -> CommunityContractABIs:
         if addresses.csm_version == 3:
             return CONTRACT_ABIS_V3
         return CONTRACT_ABIS_V2
