@@ -1,11 +1,21 @@
 # CSM Sentinel
 
-CSM Sentinel is a Telegram bot that sends you notifications for your CSM Node Operator events.
+CSM Sentinel is a Telegram bot that sends notifications for Lido staking module Node Operator events.
+It supports both the Community Staking Module (CSM) and Curated Module deployments.
 
 This bot was developed and is maintained by [@skhomuti](https://github.com/skhomuti), a member of the Lido Protocol community, 
 to simplify the process of [subscribing to the important events for CSM](https://docs.lido.fi/staking-modules/csm/guides/events/). 
 You can either [run the bot yourself](https://github.com/skhomuti/csm-sentinel?tab=readme-ov-file#running-your-own-instance) 
 or use the [community-supported public instance](https://github.com/skhomuti/csm-sentinel?tab=readme-ov-file#public-instances), depending on your privacy preferences.
+
+## Module support
+
+The bot discovers the module type from `MODULE_ADDRESS` on startup and wires the matching notification adapter automatically:
+
+- **Community Staking Module (CSM):** supports CSM v2 and v3 contracts, including automatic v3 switching after the module is initialized.
+- **Curated Module:** supports Curated Module events, MetaRegistry-based Node Operator labels, operator group notifications, and Curated-specific follow/unfollow buttons.
+
+For CSM, subscriptions are managed by Node Operator ID. For Curated, the bot also shows Node Operator labels from the MetaRegistry when they are available.
 
 ## Public Instances
 These bots are owned by [@skhomuti](https://t.me/skhomuti): [Ethereum](https://t.me/CSMSentinel_bot) and [Hoodi](https://t.me/CSMSentinelHoodi_bot). 
@@ -21,12 +31,16 @@ First, you need to create a bot on Telegram. You can do this by talking to the [
 Then, you need to create a `.env` by copying one of the `.env.sample.ethereum` or `.env.sample.hoodi` files and filling in the required fields:
 - `TOKEN`: The token you received from the BotFather
 - `WEB3_SOCKET_PROVIDER`: The websocket provider for your node. 
-Preferably, use your own local node e.g. you already have for CSM validators.
+Preferably, use your own local node, for example the execution node you already run for validators.
 But it is also possible to use a public node of any web3 providers.
+- `MODULE_ADDRESS`: The staking module address to monitor. Use the CSM address for a CSM instance or the Curated Module address for a Curated instance.
+- `MODULE_UI_URL`: Optional URL used in notification links. Use the matching CSM or Curated Module UI.
 
-All other fields are pre-filled with the contracts from the corresponding network.
+All other fields are pre-filled with the CSM contracts from the corresponding network. For a Curated instance, update at least `MODULE_ADDRESS` and `MODULE_UI_URL`; dependent contract addresses, module type, staking module ID, and MetaRegistry address are discovered on startup.
 
-Run the CSM Sentinel using Docker compose:
+`CSM_ADDRESS` and `CSM_UI_URL` are still accepted for backward compatibility, but new configs should use `MODULE_ADDRESS` and `MODULE_UI_URL`.
+
+Run the Sentinel using Docker compose:
 
 ```bash
 docker compose up -d
