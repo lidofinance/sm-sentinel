@@ -1,4 +1,4 @@
-from aiogram.utils.formatting import Text, TextLink
+from aiogram.utils.formatting import Text
 
 
 def markdown(*args, **kwargs) -> str:
@@ -7,16 +7,6 @@ def markdown(*args, **kwargs) -> str:
 
 def nl(x: int = 2) -> str:
     return "\n" * x
-
-
-def event_footer(node_operator_id: int | None, tx_link: str) -> str:
-    if node_operator_id is None:
-        return Text(nl(), TextLink("Transaction", url=tx_link)).as_markdown()
-    return Text(
-        nl(),
-        f"nodeOperatorId: {node_operator_id}\n",
-        TextLink("Transaction", url=tx_link),
-    ).as_markdown()
 
 
 def read_field(value, field: str, index: int):

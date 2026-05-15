@@ -303,7 +303,7 @@ async def test_process_blocks_validator_exit_request(anvil_launcher, via_subscri
         tx_hash="0x1cfa7454c54a3d874c2d55082ed6bf82f0a730e279f7d598221820e2b0cf9bfc",
         expected_markdown=(
             "🚨 *Validator exit requested*\n\n"
-            "Make sure to exit the key before Sat 30 Aug 2025, 02:20PM UTC\n"
+            "Make sure to exit the key before Sun 31 Aug 2025, 02:20PM UTC\n"
             "Check the [Exiting CSM validators](https://dvt-homestaker.stakesaurus.com/bonded-validators-setup/lido-csm/exiting-csm-validators) guide for more details\n"
             "Requested key: [0x8069c348ce982b1c66b68403f2061a33400f18188db89aa7f7335a4c5b0b674ef5f1a01e428006442c09cb24ad44b39e](https://beaconcha.in/validator/0x8069c348ce982b1c66b68403f2061a33400f18188db89aa7f7335a4c5b0b674ef5f1a01e428006442c09cb24ad44b39e)\n"
             "Request date: `Tue 26 Aug 2025, 02:20PM UTC`\n\n"
@@ -339,7 +339,6 @@ async def test_process_blocks_triggered_exit_fee_recorded(anvil_launcher, via_su
             "🚨 *Triggerable Withdrawal fee recorded*\n\n"
             "Validator: [0xaaaf86690452a63abe9ef3398055c7105fd78ea980eddfd5513612e1ef7342b49190fef0de38188bc850a7c474bce8e0]"
             "(https://beaconcha.in/validator/0xaaaf86690452a63abe9ef3398055c7105fd78ea980eddfd5513612e1ef7342b49190fef0de38188bc850a7c474bce8e0)\n"
-            "Fee paid now: `1 wei`\n"
             "Fee to be charged on exit: `1 wei`\n\n"
             "Exit fee will be applied when the validator exits\\.\n\n"
             "nodeOperatorId: 120\n"

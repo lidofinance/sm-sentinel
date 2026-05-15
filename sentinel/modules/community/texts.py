@@ -289,11 +289,11 @@ CommunityTexts = BotTexts(
 EVENT_EMITS = "Event {} emitted with data: \n{}"
 
 
-def EVENT_MESSAGE_FOOTER(no_id, link) -> Text:
+def event_message_footer(no_id, link) -> Text:
     return Text(nl(), f"nodeOperatorId: {no_id}\n", TextLink("Transaction", url=link))
 
 
-def EVENT_MESSAGE_FOOTER_TX_ONLY(link) -> Text:
+def event_message_footer_tx_only(link) -> Text:
     return Text(nl(), TextLink("Transaction", url=link))
 
 
@@ -494,7 +494,7 @@ def expired_bond_lock_removed():
 def key_allocated_balance_changed(key_index, new_total):
     return markdown(
         "👀 ",
-        Bold("Key allocated balance changed"),
+        Bold("Key balance increased"),
         nl(),
         "Key index: ",
         Code(str(key_index)),
@@ -671,16 +671,13 @@ def validator_exit_delay_processed(key, key_url, penalty):
 
 
 @register_event_message("TriggeredExitFeeRecorded")
-def triggered_exit_fee_recorded(key, key_url, paid_fee, recorded_fee):
+def triggered_exit_fee_recorded(key, key_url, recorded_fee):
     return markdown(
         "🚨 ",
         Bold("Triggerable Withdrawal fee recorded"),
         nl(),
         "Validator: ",
         TextLink(key, url=key_url),
-        nl(1),
-        "Fee paid now: ",
-        Code(paid_fee),
         nl(1),
         "Fee to be charged on exit: ",
         Code(recorded_fee),

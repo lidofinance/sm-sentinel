@@ -1,7 +1,9 @@
 import datetime
-from dataclasses import replace
+import logging
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from async_lru import alru_cache
 from eth_utils import humanize_wei
 
 from sentinel.models import Event, EventHandler
@@ -10,8 +12,16 @@ from sentinel.modules.curated.adapter import CURATED_EVENTS
 from sentinel.modules.curated.texts import (
     CURATED_EVENT_DESCRIPTIONS,
     CURATED_EVENT_MESSAGES,
+    event_message_footer,
+    event_message_footer_tx_only,
+    event_message_footer_with_operator_name,
 )
-from sentinel.modules.distribution import DistributionLogFetcher, default_distribution_log_fetcher
+from sentinel.modules.distribution import (
+    DistributionLogFetcher,
+    default_distribution_log_fetcher,
+    parse_distribution_log,
+    validator_sort_key,
+)
 from sentinel.modules.formatting import read_field
 from sentinel.modules.registry import RegisterEventHandler
 from sentinel.notifications import NotificationPlan
@@ -20,6 +30,7 @@ if TYPE_CHECKING:
     from sentinel.modules.curated.adapter import CuratedModuleAdapter
 
 CURATED_EVENTS_TO_FOLLOW: dict[str, EventHandler] = {}
+logger = logging.getLogger(__name__)
 
 
 def register_event(event_name: str):
@@ -58,6 +69,11 @@ def _sub_node_operator_shares(group_info) -> dict[int, int]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class NodeOperatorMetadata:
+    name: str | None
+
+
 class CuratedEventMessages(BaseModule):
     event_handlers = CURATED_EVENTS_TO_FOLLOW
     event_messages = CURATED_EVENT_MESSAGES
@@ -76,6 +92,65 @@ class CuratedEventMessages(BaseModule):
         super().reconfigure(module_adapter)
         self.meta_registry = module_adapter.contracts.meta_registry
 
+    @alru_cache(maxsize=512)
+    async def _fetch_node_operator_metadata(
+        self, node_operator_id: int, block: int
+    ) -> NodeOperatorMetadata:
+        metadata = await self.meta_registry.functions.getOperatorMetadata(node_operator_id).call(
+            block_identifier=block
+        )
+        return NodeOperatorMetadata(name=read_field(metadata, "name", 0) or None)
+
+    async def event_footer(self, event: Event) -> str:
+        tx_link = self.transaction_link(event)
+        node_operator_id = event.args.get("nodeOperatorId")
+        if node_operator_id is None:
+            return event_message_footer_tx_only(tx_link).as_markdown()
+
+        node_operator_id = int(node_operator_id)
+        try:
+            metadata = await self._fetch_node_operator_metadata(node_operator_id, event.block)
+        except Exception:
+            logger.warning(
+                "Failed to fetch Curated node operator metadata",
+                extra={"node_operator_id": node_operator_id, "block": event.block},
+                exc_info=True,
+            )
+            return event_message_footer(node_operator_id, tx_link).as_markdown()
+
+        if not metadata.name:
+            return event_message_footer(node_operator_id, tx_link).as_markdown()
+        return event_message_footer_with_operator_name(
+            node_operator_id, metadata.name, tx_link
+        ).as_markdown()
+
+    async def _node_operator_label(self, node_operator_id: int, block: int) -> str:
+        try:
+            metadata = await self._fetch_node_operator_metadata(node_operator_id, block)
+        except Exception:
+            logger.warning(
+                "Failed to fetch Curated node operator metadata",
+                extra={"node_operator_id": node_operator_id, "block": block},
+                exc_info=True,
+            )
+            return f"#{node_operator_id}"
+
+        if not metadata.name:
+            return f"#{node_operator_id}"
+        return f"#{node_operator_id} - {metadata.name}"
+
+    async def _sub_node_operator_labels(self, group_info, block: int) -> list[dict]:
+        return [
+            {
+                "nodeOperatorId": int(read_field(operator, "nodeOperatorId", 0)),
+                "share": int(read_field(operator, "share", 1)),
+                "label": await self._node_operator_label(
+                    int(read_field(operator, "nodeOperatorId", 0)), block
+                ),
+            }
+            for operator in _sub_node_operators(group_info)
+        ]
+
     @register_event("TargetValidatorsCountChanged")
     async def target_validators_count_changed(self, event: Event):
         node_operator = await self.module.functions.getNodeOperator(
@@ -87,35 +162,43 @@ class CuratedEventMessages(BaseModule):
             node_operator.targetLimit,
             event.args["targetLimitMode"],
             event.args["targetValidatorsCount"],
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     @register_event("ValidatorExitDelayProcessed")
     async def validator_exit_delay_processed(self, event: Event):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
-        return template(key, key_url, humanize_wei(event.args["delayFee"])) + self.footer(event)
+        return template(
+            key, key_url, humanize_wei(event.args["delayFee"])
+        ) + await self.event_footer(event)
 
     @register_event("Initialized")
     async def initialized(self, event: Event):
         if event.address.lower() != self.module_address.lower():
             return None
         template = self._require_message_template(event.event)
-        return template() + self.footer(event)
+        return template() + await self.event_footer(event)
 
     @register_event("BondDepositedETH")
     async def bond_deposited_eth(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["from"], humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(
+            event.args["from"], humanize_wei(event.args["amount"])
+        ) + await self.event_footer(event)
 
     @register_event("BondDepositedStETH")
     async def bond_deposited_steth(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["from"], humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(
+            event.args["from"], humanize_wei(event.args["amount"])
+        ) + await self.event_footer(event)
 
     @register_event("BondDepositedWstETH")
     async def bond_deposited_wsteth(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["from"], humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(
+            event.args["from"], humanize_wei(event.args["amount"])
+        ) + await self.event_footer(event)
 
     @register_event("BondClaimedUnstETH")
     async def bond_claimed_unsteth(self, event: Event):
@@ -124,22 +207,26 @@ class CuratedEventMessages(BaseModule):
             event.args["to"],
             humanize_wei(event.args["amount"]),
             event.args["requestId"],
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     @register_event("BondClaimedStETH")
     async def bond_claimed_steth(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["to"], humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(
+            event.args["to"], humanize_wei(event.args["amount"])
+        ) + await self.event_footer(event)
 
     @register_event("BondClaimedWstETH")
     async def bond_claimed_wsteth(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["to"], humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(
+            event.args["to"], humanize_wei(event.args["amount"])
+        ) + await self.event_footer(event)
 
     @register_event("BondBurned")
     async def bond_burned(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["burnedAmount"])) + self.footer(event)
+        return template(humanize_wei(event.args["burnedAmount"])) + await self.event_footer(event)
 
     @register_event("BondCharged")
     async def bond_charged(self, event: Event):
@@ -147,35 +234,39 @@ class CuratedEventMessages(BaseModule):
         return template(
             humanize_wei(event.args["amountToCharge"]),
             humanize_wei(event.args["chargedAmount"]),
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     @register_event("BondLockChanged")
     async def bond_lock_changed(self, event: Event):
         template = self._require_message_template(event.event)
         until = datetime.datetime.fromtimestamp(event.args["until"], datetime.UTC)
-        return template(humanize_wei(event.args["newAmount"]), _format_date(until)) + self.footer(
-            event
-        )
+        return template(
+            humanize_wei(event.args["newAmount"]), _format_date(until)
+        ) + await self.event_footer(event)
 
     @register_event("BondLockRemoved")
     async def bond_lock_removed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template() + self.footer(event)
+        return template() + await self.event_footer(event)
 
     @register_event("BondLockCompensated")
     async def bond_lock_compensated(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
 
     @register_event("BondLockPeriodChanged")
     async def bond_lock_period_changed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(str(datetime.timedelta(seconds=event.args["period"]))) + self.footer(event)
+        return template(
+            str(datetime.timedelta(seconds=event.args["period"]))
+        ) + await self.event_footer(event)
 
     @register_event("NodeOperatorEffectiveWeightChanged")
     async def node_operator_effective_weight_changed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["oldWeight"], event.args["newWeight"]) + self.footer(event)
+        return template(event.args["oldWeight"], event.args["newWeight"]) + await self.event_footer(
+            event
+        )
 
     @register_event("OperatorGroupCreated")
     async def operator_group_created(self, event: Event):
@@ -184,9 +275,9 @@ class CuratedEventMessages(BaseModule):
         operator_ids = _sub_node_operator_ids(group_info)
         if not operator_ids:
             return None
-        message = template(event.args["groupId"], _sub_node_operators(group_info)) + self.footer(
-            event
-        )
+        message = template(
+            event.args["groupId"], await self._sub_node_operator_labels(group_info, event.block)
+        ) + await self.event_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
     @register_event("OperatorGroupUpdated")
@@ -208,26 +299,31 @@ class CuratedEventMessages(BaseModule):
             return None
 
         plan = NotificationPlan().with_broadcast_targets(changed_operator_ids)
-        footer = self.footer(event)
         for node_operator_id in changed_operator_ids:
+            node_operator_label = await self._node_operator_label(node_operator_id, event.block)
             if node_operator_id not in previous_shares:
                 message = template(
                     group_id,
-                    node_operator_id,
+                    node_operator_label,
                     "added",
                     new_share=current_shares[node_operator_id],
                 )
             elif node_operator_id not in current_shares:
-                message = template(group_id, node_operator_id, "removed")
+                message = template(group_id, node_operator_label, "removed")
             else:
                 message = template(
                     group_id,
-                    node_operator_id,
+                    node_operator_label,
                     "changed",
                     previous_shares[node_operator_id],
                     current_shares[node_operator_id],
                 )
-            plan.add_node_operator_message(node_operator_id, f"{message}{footer}")
+            targeted_event = replace(
+                event, args=dict(event.args) | {"nodeOperatorId": node_operator_id}
+            )
+            plan.add_node_operator_message(
+                node_operator_id, f"{message}{await self.event_footer(targeted_event)}"
+            )
         return plan
 
     @register_event("OperatorGroupCleared")
@@ -239,7 +335,10 @@ class CuratedEventMessages(BaseModule):
         operator_ids = _sub_node_operator_ids(previous_group)
         if not operator_ids:
             return None
-        message = template(event.args["groupId"]) + self.footer(event)
+        message = template(
+            event.args["groupId"],
+            await self._sub_node_operator_labels(previous_group, event.block),
+        ) + await self.event_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
     @register_event("BondCurveWeightSet")
@@ -250,22 +349,53 @@ class CuratedEventMessages(BaseModule):
             event.args["curveId"], event.block
         )
         if not operator_ids:
-            return message + self.footer(event)
+            return None
 
         plan = NotificationPlan()
         for node_operator_id in operator_ids:
             targeted_event = replace(
-                event, args=event.args | {"nodeOperatorId": node_operator_id}
+                event, args=dict(event.args) | {"nodeOperatorId": node_operator_id}
             )
             plan.add_node_operator_message(
-                node_operator_id, f"{message}{self.footer(targeted_event)}"
+                node_operator_id, f"{message}{await self.event_footer(targeted_event)}"
             )
         return plan
 
     @register_event("OperatorMetadataSet")
     async def operator_metadata_set(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["metadata"]) + self.footer(event)
+        return template(event.args["metadata"]) + await self.event_footer(event)
+
+    async def distribution_log_updated(self, event: Event):
+        template = self._require_message_template(event.event)
+        base_message = template()
+        footer = await self.event_footer(event)
+        plan = NotificationPlan(broadcast=f"{base_message}{footer}")
+
+        log_cid = event.args.get("logCid")
+        try:
+            distribution_log = await self._fetch_distribution_log(log_cid)
+        except Exception as exc:
+            logger.warning(
+                "Failed to enrich DistributionLogUpdated for logCid %s: %s",
+                log_cid,
+                exc,
+            )
+            return plan
+
+        summary = parse_distribution_log(distribution_log)
+
+        if summary.all_operator_ids:
+            plan.with_broadcast_targets(summary.all_operator_ids)
+
+        for operator_id, flagged in summary.strikes_per_operator.items():
+            flagged_sorted = sorted(flagged, key=lambda item: validator_sort_key(item[0]))
+            node_operator_label = await self._node_operator_label(int(operator_id), event.block)
+            plan.add_node_operator_message(
+                operator_id, f"{template(node_operator_label, flagged_sorted)}{footer}"
+            )
+
+        return plan
 
     async def _node_operator_ids_for_bond_curve(self, curve_id: int, block: int) -> set[int]:
         operators_count = await self.module.functions.getNodeOperatorsCount().call(
@@ -284,7 +414,9 @@ class CuratedEventMessages(BaseModule):
 register_event("DepositedSigningKeysCountChanged")(
     CuratedEventMessages.deposited_signing_keys_count_changed
 )
-register_event("TotalSigningKeysCountChanged")(CuratedEventMessages.total_signing_keys_count_changed)
+register_event("TotalSigningKeysCountChanged")(
+    CuratedEventMessages.total_signing_keys_count_changed
+)
 register_event("VettedSigningKeysCountDecreased")(
     CuratedEventMessages.vetted_signing_keys_count_decreased
 )

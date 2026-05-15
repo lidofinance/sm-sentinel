@@ -110,10 +110,9 @@ async def test_curated_process_blocks_bond_deposited_eth(anvil_launcher):
         fork_block=2760979,
         expected_markdown=(
             "✅ *Bond deposited*\n\n"
-            "Asset: `ETH`\n"
             "From: `0x9BC9ffe091DEa5dBD9E5b85e43F36D43D600eCE4`\n"
-            "Amount: `12\\.5 ether`\n\n"
-            "nodeOperatorId: 0\n"
+            "Amount: `12\\.5 ETH`\n\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -129,7 +128,7 @@ async def test_curated_process_blocks_deposited_signing_keys_count_changed(
         expected_markdown=(
             "🤩 *Keys were deposited\\!*\n\n"
             "New deposited keys count: 16\n\n"
-            "nodeOperatorId: 2\n"
+            "Node Operator: \\#2 \\- Develp PTO\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -142,10 +141,9 @@ async def test_curated_process_blocks_bond_claimed_steth(anvil_launcher):
         fork_block=2798407,
         expected_markdown=(
             "✅ *Bond claimed*\n\n"
-            "Asset: `stETH`\n"
             "Recipient: `0x330881A81Abf9437Ed877B3a8BB119A952af7d66`\n"
-            "Amount: `0\\.003284375825565586 ether`\n\n"
-            "nodeOperatorId: 3\n"
+            "Amount: `0\\.003284375825565586 stETH`\n\n"
+            "Node Operator: \\#3 \\- Consensys Curated Operator 1\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -161,7 +159,7 @@ async def test_curated_process_blocks_node_operator_effective_weight_changed(
         expected_markdown=(
             "ℹ️ *Operator effective weight changed*\n\n"
             "Effective weight: `0 \\-\\> 100000`\n\n"
-            "nodeOperatorId: 0\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -197,12 +195,7 @@ async def test_curated_process_blocks_bond_curve_weight_set(anvil_launcher):
     await _exercise_curated_event(
         event_name="BondCurveWeightSet",
         fork_block=2662659,
-        expected_markdown=(
-            "ℹ️ *Operator type weight changed*\n\n"
-            "Type id: `0`\n"
-            "New weight: `50000`\n\n"
-            "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
-        ),
+        expected_markdown=None,
         anvil_launcher=anvil_launcher,
     )
 
@@ -215,8 +208,8 @@ async def test_curated_process_blocks_operator_group_created(anvil_launcher):
             "ℹ️ *Operator group created*\n\n"
             "Group id: `1`\n"
             "Added Node Operators:\n"
-            "`\\- \\#0: share 10000\n"
-            "\\- \\#1: share 0`\n\n"
+            "`\\- \\#0 \\- Attestant \\(BVI\\) Limited: share 10000\n"
+            "\\- \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC: share 0`\n\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -233,16 +226,18 @@ async def test_curated_process_blocks_operator_group_updated(anvil_launcher):
                 "ℹ️ *Operator group updated*\n\n"
                 "Group id: `1`\n"
                 "\n"
-                "Node Operator: `\\#0`\n"
+                "Node Operator: `\\#0 \\- Attestant \\(BVI\\) Limited`\n"
                 "Node Operator share changed: `10000 \\-\\> 5000`\n\n"
+                "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
                 "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
             ),
             "1": (
                 "ℹ️ *Operator group updated*\n\n"
                 "Group id: `1`\n"
                 "\n"
-                "Node Operator: `\\#1`\n"
+                "Node Operator: `\\#1 \\- Attestant \\(BVI\\) Limited \\- IODC`\n"
                 "Node Operator share changed: `0 \\-\\> 5000`\n\n"
+                "Node Operator: \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC\n"
                 "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
             ),
         },
@@ -261,7 +256,7 @@ async def test_curated_process_blocks_operator_metadata_set(anvil_launcher):
             "\\(distributed key manager\\) and Vouch \\(multi\\-node Ethereum consensus client\\)\\. We focus on "
             "secure, professional validator operations and have built a lot of the open\\-source tooling that "
             "underpins best\\-practice staking infrastructure\\.`\n\n"
-            "nodeOperatorId: 0\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -277,7 +272,7 @@ async def test_curated_process_blocks_total_signing_keys_count_changed(
         expected_markdown=(
             "👀 *New keys uploaded*\n\n"
             "Keys count: `0 \\-\\> 16`\n\n"
-            "nodeOperatorId: 0\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -294,7 +289,7 @@ async def test_curated_process_blocks_node_operator_manager_address_change_propo
             "ℹ️ *New manager address proposed*\n\n"
             "Proposed address: `0xA9113E3632FB4Fa1B5eC6b00a2bBD345BEF8b293`\n"
             "To complete the change, the Node Operator must confirm it from the new address\\.\n\n"
-            "nodeOperatorId: 10\n"
+            "Node Operator: \\#10 \\- QA Operator\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -310,7 +305,7 @@ async def test_curated_process_blocks_node_operator_manager_address_changed(
         expected_markdown=(
             "✅ *Manager address changed*\n\n"
             "New address: `0xA9113E3632FB4Fa1B5eC6b00a2bBD345BEF8b293`\n\n"
-            "nodeOperatorId: 10\n"
+            "Node Operator: \\#10 \\- QA Operator\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -326,7 +321,7 @@ async def test_curated_process_blocks_node_operator_reward_address_changed(
         expected_markdown=(
             "✅ *Rewards address changed*\n\n"
             "New address: `0x5fDCb78cA9A1164c13428E5fC9582c8c48Dab69f`\n\n"
-            "nodeOperatorId: 28\n"
+            "Node Operator: \\#28 \\- Stakely DVT\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -343,7 +338,7 @@ async def test_curated_process_blocks_node_operator_reward_address_change_propos
             "ℹ️ *New rewards address proposed*\n\n"
             "Proposed address: `0x75Ce9d9C53f08B96D88f8FD6494d0B664be16878`\n"
             "To complete the change, the Node Operator must confirm it from the new address\\.\n\n"
-            "nodeOperatorId: 28\n"
+            "Node Operator: \\#28 \\- Stakely DVT\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -359,7 +354,7 @@ async def test_curated_process_blocks_bond_curve_set(anvil_launcher):
             "New type id: `1`\n"
             "Operational requirements may now differ\\. "
             "Check the [Curated Module UI](https://lido.fi) for updated guidance\\.\n\n"
-            "nodeOperatorId: 0\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -372,10 +367,9 @@ async def test_curated_process_blocks_bond_deposited_steth(anvil_launcher):
         fork_block=2766428,
         expected_markdown=(
             "✅ *Bond deposited*\n\n"
-            "Asset: `stETH`\n"
             "From: `0x6117ED3095b58298B3223dBD474281ED4112e845`\n"
-            "Amount: `0\\.8 ether`\n\n"
-            "nodeOperatorId: 2\n"
+            "Amount: `0\\.8 stETH`\n\n"
+            "Node Operator: \\#2 \\- Develp PTO\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,

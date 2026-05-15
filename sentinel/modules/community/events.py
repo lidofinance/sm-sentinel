@@ -11,6 +11,8 @@ from sentinel.modules.community.adapter import COMMUNITY_NOTIFIABLE_EVENTS
 from sentinel.modules.community.texts import (
     COMMUNITY_EVENT_DESCRIPTIONS,
     COMMUNITY_EVENT_MESSAGES,
+    event_message_footer,
+    event_message_footer_tx_only,
 )
 from sentinel.modules.distribution import DistributionLogFetcher, default_distribution_log_fetcher
 from sentinel.modules.registry import RegisterEventHandler
@@ -68,6 +70,13 @@ class CommunityEventMessages(BaseModule):
 
         super().reconfigure(module_adapter)
 
+    async def event_footer(self, event: Event) -> str:
+        tx_link = self.transaction_link(event)
+        node_operator_id = event.args.get("nodeOperatorId")
+        if node_operator_id is None:
+            return event_message_footer_tx_only(tx_link).as_markdown()
+        return event_message_footer(node_operator_id, tx_link).as_markdown()
+
     @register_event("ELRewardsStealingPenaltyCancelled")
     async def el_rewards_stealing_penalty_cancelled(self, event: Event):
         template = self._require_message_template(event.event)
@@ -76,7 +85,7 @@ class CommunityEventMessages(BaseModule):
                 block_identifier=event.block
             )
         )
-        return template(remaining_amount) + self.footer(event)
+        return template(remaining_amount) + await self.event_footer(event)
 
     @register_event("ELRewardsStealingPenaltyReported")
     async def el_rewards_stealing_penalty_reported(self, event: Event):
@@ -86,7 +95,9 @@ class CommunityEventMessages(BaseModule):
             self.cfg.etherscan_block_url_template, "ETHERSCAN_URL"
         )
         block_link = block_template.format(block_hash)
-        return template(humanize_wei(event.args["stolenAmount"]), block_link) + self.footer(event)
+        return template(
+            humanize_wei(event.args["stolenAmount"]), block_link
+        ) + await self.event_footer(event)
 
     @register_event("ELRewardsStealingPenaltySettled")
     async def el_rewards_stealing_penalty_settled(self, event: Event):
@@ -101,7 +112,7 @@ class CommunityEventMessages(BaseModule):
             amount = burnt_event.args["burnedAmount"]
         else:
             amount = 0
-        return template(humanize_wei(amount)) + self.footer(event)
+        return template(humanize_wei(amount)) + await self.event_footer(event)
 
     @register_event("WithdrawalSubmitted")
     async def withdrawal_submitted(self, event: Event):
@@ -116,7 +127,9 @@ class CommunityEventMessages(BaseModule):
             self.cfg.beaconchain_url_template, "BEACONCHAIN_URL"
         )
         key_url = beacon_template.format(key)
-        return template(key, key_url, humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(key, key_url, humanize_wei(event.args["amount"])) + await self.event_footer(
+            event
+        )
 
     @register_event("ValidatorExitDelayProcessed")
     async def validator_exit_delay_processed(self, event: Event):
@@ -126,7 +139,7 @@ class CommunityEventMessages(BaseModule):
             event.args["delayPenalty"] if "delayPenalty" in event.args else event.args["delayFee"]
         )
         penalty = humanize_wei(penalty_amount)
-        return template(key, key_url, penalty) + self.footer(event)
+        return template(key, key_url, penalty) + await self.event_footer(event)
 
     @register_event("TargetValidatorsCountChanged")
     async def target_validators_count_changed(self, event: Event):
@@ -142,7 +155,7 @@ class CommunityEventMessages(BaseModule):
             limit_before,
             event.args["targetLimitMode"],
             event.args["targetValidatorsCount"],
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     @register_event("Initialized")
     async def initialized(self, event: Event):
@@ -153,7 +166,7 @@ class CommunityEventMessages(BaseModule):
             return None
         if self.module_adapter.csm_version < 3:
             await self._csm_version_switcher(3)
-        return template() + self.footer(event)
+        return template() + await self.event_footer(event)
 
 
 register_event("DepositedSigningKeysCountChanged")(

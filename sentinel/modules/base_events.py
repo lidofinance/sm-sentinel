@@ -38,20 +38,20 @@ class BaseModule(EventMessageEngineBase):
 
     async def deposited_signing_keys_count_changed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["depositedKeysCount"]) + self.footer(event)
+        return template(event.args["depositedKeysCount"]) + await self.event_footer(event)
 
     async def total_signing_keys_count_changed(self, event: Event):
         template = self._require_message_template(event.event)
         node_operator = await self.module.functions.getNodeOperator(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
-        return template(event.args["totalKeysCount"], node_operator.totalAddedKeys) + self.footer(
-            event
-        )
+        return template(
+            event.args["totalKeysCount"], node_operator.totalAddedKeys
+        ) + await self.event_footer(event)
 
     async def vetted_signing_keys_count_decreased(self, event: Event):
         template = self._require_message_template(event.event)
-        return template() + self.footer(event)
+        return template() + await self.event_footer(event)
 
     async def key_removal_charge_applied(self, event: Event):
         template = self._require_message_template(event.event)
@@ -61,57 +61,61 @@ class BaseModule(EventMessageEngineBase):
         amount = await self.parametersRegistry.functions.getKeyRemovalCharge(curve_id).call(
             block_identifier=event.block
         )
-        return template(humanize_wei(amount)) + self.footer(event)
+        return template(humanize_wei(amount)) + await self.event_footer(event)
 
     async def key_allocated_balance_changed(self, event: Event):
+        # TODO: batch multiple key balance updates for the same operator when event grouping is
+        # available; doing it here would lose per-key context and notification targeting.
         template = self._require_message_template(event.event)
         return template(
             event.args["keyIndex"],
             humanize_wei(event.args["newTotal"]),
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     async def bond_curve_set(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["curveId"]) + self.footer(event)
+        return template(event.args["curveId"]) + await self.event_footer(event)
 
     async def node_operator_manager_address_change_proposed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["newProposedAddress"]) + self.footer(event)
+        return template(event.args["newProposedAddress"]) + await self.event_footer(event)
 
     async def node_operator_manager_address_changed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["newAddress"]) + self.footer(event)
+        return template(event.args["newAddress"]) + await self.event_footer(event)
 
     async def node_operator_reward_address_change_proposed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["newProposedAddress"]) + self.footer(event)
+        return template(event.args["newProposedAddress"]) + await self.event_footer(event)
 
     async def node_operator_reward_address_changed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["newAddress"]) + self.footer(event)
+        return template(event.args["newAddress"]) + await self.event_footer(event)
 
     async def custom_rewards_claimer_set(self, event: Event):
         template = self._require_message_template(event.event)
         previous_rewards_claimer = await self.accounting.functions.getCustomRewardsClaimer(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
-        return template(event.args["rewardsClaimer"], previous_rewards_claimer) + self.footer(event)
+        return template(
+            event.args["rewardsClaimer"], previous_rewards_claimer
+        ) + await self.event_footer(event)
 
     async def fee_splits_set(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["feeSplits"]) + self.footer(event)
+        return template(event.args["feeSplits"]) + await self.event_footer(event)
 
     async def bond_debt_increased(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
 
     async def bond_debt_covered(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
 
     async def expired_bond_lock_removed(self, event: Event):
         template = self._require_message_template(event.event)
-        return template() + self.footer(event)
+        return template() + await self.event_footer(event)
 
     async def general_delayed_penalty_reported(self, event: Event):
         template = self._require_message_template(event.event)
@@ -119,11 +123,11 @@ class BaseModule(EventMessageEngineBase):
             humanize_wei(event.args["amount"]),
             humanize_wei(event.args["additionalFine"]),
             event.args["details"],
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     async def general_delayed_penalty_settled(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
 
     async def general_delayed_penalty_cancelled(self, event: Event):
         template = self._require_message_template(event.event)
@@ -132,25 +136,31 @@ class BaseModule(EventMessageEngineBase):
                 block_identifier=event.block
             )
         )
-        return template(remaining_amount) + self.footer(event)
+        return template(remaining_amount) + await self.event_footer(event)
 
     async def general_delayed_penalty_compensated(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + self.footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
 
     async def validator_slashing_reported(self, event: Event):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
-        return template(key, key_url, event.args["keyIndex"]) + self.footer(event)
+        return template(key, key_url, event.args["keyIndex"]) + await self.event_footer(event)
 
     async def validator_exit_request(self, event: Event):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["validatorPubkey"])
         request_date = datetime.datetime.fromtimestamp(event.args["timestamp"], datetime.UTC)
-        exit_until = request_date + datetime.timedelta(days=4)
+        curve_id = await self.accounting.functions.getBondCurveId(
+            event.args["nodeOperatorId"]
+        ).call(block_identifier=event.block)
+        allowed_exit_delay = await self.parametersRegistry.functions.getAllowedExitDelay(
+            curve_id
+        ).call(block_identifier=event.block)
+        exit_until = request_date + datetime.timedelta(seconds=allowed_exit_delay)
         return template(
             key, key_url, _format_date(request_date), _format_date(exit_until)
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     async def triggered_exit_fee_recorded(self, event: Event):
         template = self._require_message_template(event.event)
@@ -158,16 +168,15 @@ class BaseModule(EventMessageEngineBase):
         return template(
             key,
             key_url,
-            humanize_wei(event.args["withdrawalRequestPaidFee"]),
             humanize_wei(event.args["withdrawalRequestRecordedFee"]),
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     async def strikes_penalty_processed(self, event: Event):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
-        return template(key, key_url, humanize_wei(event.args["strikesPenalty"])) + self.footer(
-            event
-        )
+        return template(
+            key, key_url, humanize_wei(event.args["strikesPenalty"])
+        ) + await self.event_footer(event)
 
     async def validator_withdrawn(self, event: Event):
         template = self._require_message_template(event.event)
@@ -177,12 +186,12 @@ class BaseModule(EventMessageEngineBase):
             key_url,
             humanize_wei(event.args["exitBalance"]),
             humanize_wei(event.args["slashingPenalty"]),
-        ) + self.footer(event)
+        ) + await self.event_footer(event)
 
     async def distribution_log_updated(self, event: Event):
         template = self._require_message_template(event.event)
         base_message = template()
-        footer = self.footer(event)
+        footer = await self.event_footer(event)
         plan = NotificationPlan(broadcast=f"{base_message}{footer}")
 
         log_cid = event.args.get("logCid")

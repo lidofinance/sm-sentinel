@@ -6,7 +6,6 @@ from async_lru import alru_cache
 from sentinel.config import get_config
 from sentinel.models import Event, EventHandler
 from sentinel.modules.distribution import DistributionLogFetcher
-from sentinel.modules.formatting import event_footer
 from sentinel.notifications import NotificationPlan
 
 MessageTemplate = Callable[..., str]
@@ -61,10 +60,12 @@ class EventMessageEngineBase:
 
         return plan
 
-    def footer(self, event: Event):
+    async def event_footer(self, event: Event) -> str:
+        raise NotImplementedError
+
+    def transaction_link(self, event: Event) -> str:
         tx_template = self._require_template(self.cfg.etherscan_tx_url_template, "ETHERSCAN_URL")
-        tx_link = tx_template.format("0x" + event.tx.hex())
-        return event_footer(event.args.get("nodeOperatorId"), tx_link)
+        return tx_template.format("0x" + event.tx.hex())
 
     def to_hex(self, value) -> str:
         return self.chain.w3.to_hex(value)

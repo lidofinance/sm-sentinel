@@ -289,11 +289,15 @@ CuratedTexts = BotTexts(
 EVENT_EMITS = "Event {} emitted with data: \n{}"
 
 
-def EVENT_MESSAGE_FOOTER(no_id, link) -> Text:
+def event_message_footer(no_id, link) -> Text:
     return Text(nl(), f"nodeOperatorId: {no_id}\n", TextLink("Transaction", url=link))
 
 
-def EVENT_MESSAGE_FOOTER_TX_ONLY(link) -> Text:
+def event_message_footer_with_operator_name(no_id, name, link) -> Text:
+    return Text(nl(), f"Node Operator: #{no_id} - {name}\n", TextLink("Transaction", url=link))
+
+
+def event_message_footer_tx_only(link) -> Text:
     return Text(nl(), TextLink("Transaction", url=link))
 
 
@@ -341,7 +345,7 @@ def key_removal_charge_applied(amount):
 def key_allocated_balance_changed(key_index, new_total):
     return markdown(
         "👀 ",
-        Bold("Key allocated balance changed"),
+        Bold("Key balance increased"),
         nl(),
         "Key index: ",
         Code(str(key_index)),
@@ -657,16 +661,13 @@ def validator_exit_delay_processed(key, key_url, penalty):
 
 
 @register_event_message("TriggeredExitFeeRecorded")
-def triggered_exit_fee_recorded(key, key_url, paid_fee, recorded_fee):
+def triggered_exit_fee_recorded(key, key_url, recorded_fee):
     return markdown(
         "🚨 ",
         Bold("Triggerable Withdrawal fee recorded"),
         nl(),
         "Validator: ",
         TextLink(key, url=key_url),
-        nl(1),
-        "Fee paid now: ",
-        Code(paid_fee),
         nl(1),
         "Fee to be charged on exit: ",
         Code(recorded_fee),
@@ -710,7 +711,7 @@ def validator_withdrawn(key, key_url, balance, slashing_penalty):
 
 @register_event_message("DistributionLogUpdated")
 def distribution_data_updated(
-    node_operator_id: int | None = None, striked_validators: list | None = None
+    node_operator_label: str | None = None, striked_validators: list | None = None
 ):
     cfg = get_config()
     base_message = Text(
@@ -722,7 +723,7 @@ def distribution_data_updated(
         " to check new claimable rewards.",
     )
 
-    if node_operator_id is not None and striked_validators:
+    if node_operator_label is not None and striked_validators:
         return Text(
             base_message,
             Text(
@@ -730,8 +731,8 @@ def distribution_data_updated(
                 "⚠️ ",
                 Bold("Strikes detected for validators"),
                 nl(),
-                "Operator ID: ",
-                Code(str(node_operator_id)),
+                "Node Operator: ",
+                Code(str(node_operator_label)),
                 nl(1),
                 "Validators with strikes: ",
                 Code(len(striked_validators)),
@@ -755,19 +756,22 @@ def initialized():
     )
 
 
+def _asset_amount(amount: str, asset: str) -> str:
+    if amount.endswith(" ether"):
+        return f"{amount.removesuffix(' ether')} {asset}"
+    return f"{amount} {asset}"
+
+
 def _bond_deposited(asset: str, sender: str, amount: str):
     return markdown(
         "✅ ",
         Bold("Bond deposited"),
         nl(),
-        "Asset: ",
-        Code(asset),
-        nl(1),
         "From: ",
         Code(sender),
         nl(1),
         "Amount: ",
-        Code(amount),
+        Code(_asset_amount(amount, asset)),
     )
 
 
@@ -792,14 +796,11 @@ def bond_claimed_unsteth(recipient, amount, request_id):
         "✅ ",
         Bold("Bond claim requested"),
         nl(),
-        "Asset: ",
-        Code("unstETH"),
-        nl(1),
         "Recipient: ",
         Code(recipient),
         nl(1),
         "Amount: ",
-        Code(amount),
+        Code(_asset_amount(amount, "unstETH")),
         nl(1),
         "Withdrawal request id: ",
         Code(str(request_id)),
@@ -811,14 +812,11 @@ def _bond_claimed(asset: str, recipient: str, amount: str):
         "✅ ",
         Bold("Bond claimed"),
         nl(),
-        "Asset: ",
-        Code(asset),
-        nl(1),
         "Recipient: ",
         Code(recipient),
         nl(1),
         "Amount: ",
-        Code(amount),
+        Code(_asset_amount(amount, asset)),
     )
 
 
@@ -834,7 +832,9 @@ def bond_claimed_wsteth(recipient, amount):
 
 @register_event_message("BondBurned")
 def bond_burned(amount):
-    return markdown("🚨 ", Bold("Bond burned"), nl(), "Burned amount: ", Code(amount))
+    return markdown(
+        "🚨 ", Bold("Bond burned"), nl(), "Burned amount: ", Code(_asset_amount(amount, "ETH"))
+    )
 
 
 @register_event_message("BondCharged")
@@ -844,10 +844,10 @@ def bond_charged(amount_to_charge, charged_amount):
         Bold("Bond charged"),
         nl(),
         "Requested charge: ",
-        Code(amount_to_charge),
+        Code(_asset_amount(amount_to_charge, "ETH")),
         nl(1),
         "Charged amount: ",
-        Code(charged_amount),
+        Code(_asset_amount(charged_amount, "ETH")),
     )
 
 
@@ -858,7 +858,7 @@ def bond_lock_changed(new_amount, until):
         Bold("Bond lock changed"),
         nl(),
         "Locked amount: ",
-        Code(new_amount),
+        Code(_asset_amount(new_amount, "ETH")),
         nl(1),
         "Locked until: ",
         Code(until),
@@ -878,7 +878,11 @@ def bond_lock_removed():
 @register_event_message("BondLockCompensated")
 def bond_lock_compensated(amount):
     return markdown(
-        "✅ ", Bold("Bond lock compensated"), nl(), "Compensated amount: ", Code(amount)
+        "✅ ",
+        Bold("Bond lock compensated"),
+        nl(),
+        "Compensated amount: ",
+        Code(_asset_amount(amount, "ETH")),
     )
 
 
@@ -910,9 +914,17 @@ def _format_sub_node_operators(sub_node_operators) -> str:
     if not sub_node_operators:
         return "none"
     return "\n".join(
-        f"- #{read_field(operator, 'nodeOperatorId', 0)}: share {read_field(operator, 'share', 1)}"
+        f"- {_operator_label(operator)}: share {read_field(operator, 'share', 1)}"
         for operator in sub_node_operators
     )
+
+
+def _operator_label(operator) -> str:
+    if hasattr(operator, "label"):
+        return operator.label
+    if isinstance(operator, dict) and "label" in operator:
+        return operator["label"]
+    return f"#{read_field(operator, 'nodeOperatorId', 0)}"
 
 
 @register_event_message("OperatorGroupCreated")
@@ -931,7 +943,7 @@ def operator_group_created(group_id, sub_node_operators):
 
 
 @register_event_message("OperatorGroupUpdated")
-def operator_group_updated(group_id, node_operator_id, change_kind, old_share=None, new_share=None):
+def operator_group_updated(group_id, node_operator_label, change_kind, old_share=None, new_share=None):
     title_prefix = "🚨 " if change_kind == "removed" else "ℹ️ "
     parts: list = [
         title_prefix,
@@ -941,7 +953,7 @@ def operator_group_updated(group_id, node_operator_id, change_kind, old_share=No
         Code(str(group_id)),
         nl(),
         "Node Operator: ",
-        Code(f"#{node_operator_id}"),
+        Code(str(node_operator_label)),
         nl(1),
     ]
     match change_kind:
@@ -960,7 +972,7 @@ def operator_group_updated(group_id, node_operator_id, change_kind, old_share=No
 
 
 @register_event_message("OperatorGroupCleared")
-def operator_group_cleared(group_id):
+def operator_group_cleared(group_id, sub_node_operators):
     return markdown(
         "🚨 ",
         Bold("Operator group cleared"),
@@ -968,7 +980,9 @@ def operator_group_cleared(group_id):
         "Group id: ",
         Code(str(group_id)),
         nl(1),
-        "Node Operator removed from the cleared group.",
+        "Affected Node Operators:",
+        nl(1),
+        Code(_format_sub_node_operators(sub_node_operators)),
     )
 
 
