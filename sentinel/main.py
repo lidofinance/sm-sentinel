@@ -1,9 +1,11 @@
 import logging
 
 from sentinel.app.bootstrap import create_runtime, run
-from sentinel.events import EVENTS_TO_FOLLOW
 from sentinel.handlers import register_handlers
-from sentinel.texts import EVENT_DESCRIPTIONS, EVENT_MESSAGES
+from sentinel.modules.community.events import (
+    assert_event_mappings as assert_community_event_mappings,
+)
+from sentinel.modules.curated.events import assert_event_mappings as assert_curated_event_mappings
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -13,13 +15,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-
 def _assert_event_mappings() -> None:
-    events = set(EVENTS_TO_FOLLOW.keys())
-    messages = set(EVENT_MESSAGES.keys())
-    descriptions = set(EVENT_DESCRIPTIONS.keys())
-    assert events == messages, "Missed events: " + str(events.symmetric_difference(messages))
-    assert events == descriptions, "Missed events: " + str(events.symmetric_difference(descriptions))
+    assert_community_event_mappings()
+    assert_curated_event_mappings()
 
 
 if __name__ == "__main__":

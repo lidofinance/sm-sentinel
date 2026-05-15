@@ -17,7 +17,7 @@ logging.getLogger("web3.providers.WebSocketProvider").setLevel(logging.WARNING)
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
-    from sentinel.models import ContractABIs
+    from sentinel.modules.base import ModuleAdapter
 
 
 class TelegramSubscription(Subscription):
@@ -28,19 +28,21 @@ class TelegramSubscription(Subscription):
         w3,
         application: Application,
         event_messages,
+        event_side_effects,
         *,
         health: HealthState,
-        contract_abis: "ContractABIs",
+        module_adapter: "ModuleAdapter",
         backfill_w3=None,
     ) -> None:
         super().__init__(
             w3,
             health=health,
             backfill_w3=backfill_w3,
-            contract_abis=contract_abis,
+            module_adapter=module_adapter,
         )
         self.application = application
         self.event_messages = event_messages
+        self.event_side_effects = event_side_effects
         self._ignore_subscription_events_until_block: int | None = None
 
     def start_catchup(self, until_block: int) -> None:
@@ -52,32 +54,48 @@ class TelegramSubscription(Subscription):
         self._ignore_subscription_events_until_block = None
 
     async def handle_csm_version_changed(self, csm_version: int) -> None:
+        from sentinel.app.contracts import CommunityContractAddresses
         from sentinel.app.module_adapter import build_module_adapter_from_config
         from sentinel.app.runtime import get_runtime_from_application
+        from sentinel.modules.community.adapter import CommunityModuleAdapter
 
         runtime = get_runtime_from_application(self.application)
-        if runtime.module_adapter.csm_version == csm_version:
-            self.update_event_bindings(runtime.module_adapter.contract_abis)
+        if not isinstance(
+            runtime.config.contract_addresses, CommunityContractAddresses
+        ) or not isinstance(runtime.module_adapter, CommunityModuleAdapter):
+            logger.warning(
+                "Ignoring CSM version change for non-community module",
+                extra={"module_type": runtime.config.contract_addresses.module_type.value},
+            )
             return
 
-        cfg = replace(runtime.config, csm_version=csm_version)
+        if runtime.module_adapter.csm_version == csm_version:
+            self.reconfigure_module_adapter(runtime.module_adapter)
+            return
+
+        contract_addresses = replace(
+            runtime.config.contract_addresses,
+            csm_version=csm_version,
+        )
+        cfg = replace(runtime.config, contract_addresses=contract_addresses)
         set_config(cfg)
-        module_adapter = build_module_adapter_from_config(cfg, self.event_messages.w3)
+        module_adapter = build_module_adapter_from_config(
+            cfg,
+            runtime.chain.w3,
+            runtime.chain,
+        )
 
         runtime.config = cfg
         runtime.module_adapter = module_adapter
         self.cfg = cfg
         self.event_messages.cfg = cfg
         self.event_messages.reconfigure(module_adapter)
-        self.update_event_bindings(module_adapter.contract_abis)
+        self.event_side_effects.reconfigure(module_adapter)
+        self.reconfigure_module_adapter(module_adapter)
         logger.info("CSM runtime bindings switched to version %s", csm_version)
 
     async def _prepare_event_for_delivery(self, event: Event) -> None:
-        if event.event != "Initialized":
-            return
-        # Run the control event handler before queueing so subsequent v3 logs can
-        # be decoded with v3 ABI/topic bindings even if Telegram update handling lags.
-        await self.event_messages.get_notification_plan(event)
+        await self.event_side_effects.process_event(event)
 
     async def process_event_log(self, event: Event):
         await self._prepare_event_for_delivery(event)

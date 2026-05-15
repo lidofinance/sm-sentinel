@@ -5,7 +5,6 @@ from telegram.constants import ChatType
 
 from sentinel.handlers.state import States
 from sentinel.handlers.utils import is_admin
-from sentinel.texts import ADMIN_PRIVATE_CHAT_REQUIRED
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
@@ -28,7 +27,10 @@ async def _notify_private_chat_required(update, context: "BotContext") -> None:
     chat = update.effective_chat
     if chat is None:
         return
-    await context.bot.send_message(chat_id=chat.id, text=ADMIN_PRIVATE_CHAT_REQUIRED)
+    await context.bot.send_message(
+        chat_id=chat.id,
+        text=context.runtime.module_adapter.texts.ADMIN_PRIVATE_CHAT_REQUIRED,
+    )
 
 
 def admin_only(failure_state: States):

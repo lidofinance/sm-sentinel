@@ -7,24 +7,15 @@ from telegram.error import BadRequest, TelegramError
 from sentinel.handlers.admin.common import admin_only
 from sentinel.handlers.state import Callback, States
 from sentinel.handlers.utils import resolve_target_chats_for_node_operators
-from sentinel.texts import (
-    ADMIN_BROADCAST_ALL,
-    ADMIN_BROADCAST_BY_NO,
-    ADMIN_BROADCAST_CONFIRM_HINT,
-    ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
-    ADMIN_BROADCAST_ENTER_NO_IDS,
-    ADMIN_BROADCAST_MENU_TEXT,
-    ADMIN_BROADCAST_NO_IDS_INVALID,
-    ADMIN_BROADCAST_PREVIEW_ALL,
-    ADMIN_BROADCAST_PREVIEW_SELECTED,
-    BUTTON_BACK,
-    BUTTON_SEND_BROADCAST,
-)
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
+
+
+def _texts(context: "BotContext"):
+    return context.runtime.module_adapter.texts
 
 
 class BroadcastSession:
@@ -97,12 +88,22 @@ async def broadcast_menu(update: Update, context: "BotContext") -> States:
     await _delete_preview_message(context)
     session = BroadcastSession(context)
     keyboard = [
-        [InlineKeyboardButton(ADMIN_BROADCAST_ALL, callback_data=Callback.ADMIN_BROADCAST_ALL.value)],
-        [InlineKeyboardButton(ADMIN_BROADCAST_BY_NO, callback_data=Callback.ADMIN_BROADCAST_BY_NO.value)],
-        [InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)],
+        [
+            InlineKeyboardButton(
+                _texts(context).ADMIN_BROADCAST_ALL,
+                callback_data=Callback.ADMIN_BROADCAST_ALL.value,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                _texts(context).ADMIN_BROADCAST_BY_NO,
+                callback_data=Callback.ADMIN_BROADCAST_BY_NO.value,
+            )
+        ],
+        [InlineKeyboardButton(_texts(context).BUTTON_BACK, callback_data=Callback.BACK.value)],
     ]
     updated_message = await query.edit_message_text(
-        text=ADMIN_BROADCAST_MENU_TEXT,
+        text=_texts(context).ADMIN_BROADCAST_MENU_TEXT,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     session.store_prompt(updated_message)
@@ -119,9 +120,11 @@ async def broadcast_all_prompt(update: Update, context: "BotContext") -> States:
     await query.answer()
     await _delete_preview_message(context)
     session = BroadcastSession(context)
-    keyboard = [[InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)]]
+    keyboard = [
+        [InlineKeyboardButton(_texts(context).BUTTON_BACK, callback_data=Callback.BACK.value)]
+    ]
     updated_message = await query.edit_message_text(
-        text=ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
+        text=_texts(context).ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     session.store_prompt(updated_message)
@@ -139,9 +142,11 @@ async def broadcast_by_no(update: Update, context: "BotContext") -> States:
     session = BroadcastSession(context)
     session.clear_selected_ids()
     session.clear_message_text()
-    keyboard = [[InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)]]
+    keyboard = [
+        [InlineKeyboardButton(_texts(context).BUTTON_BACK, callback_data=Callback.BACK.value)]
+    ]
     updated_message = await query.edit_message_text(
-        text=ADMIN_BROADCAST_ENTER_NO_IDS,
+        text=_texts(context).ADMIN_BROADCAST_ENTER_NO_IDS,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     session.store_prompt(updated_message)
@@ -162,8 +167,8 @@ async def broadcast_all_message(update: Update, context: "BotContext") -> States
         await _edit_broadcast_prompt_message(
             context,
             chat_id,
-            ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
-            _back_markup(),
+            _texts(context).ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_MESSAGE_ALL
 
@@ -175,7 +180,7 @@ async def broadcast_all_message(update: Update, context: "BotContext") -> States
             context,
             chat_id,
             "Unable to preview that message. Please try again.",
-            _back_markup(),
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_MESSAGE_ALL
 
@@ -183,8 +188,8 @@ async def broadcast_all_message(update: Update, context: "BotContext") -> States
     await _edit_broadcast_prompt_message(
         context,
         chat_id,
-        _format_preview_text(ADMIN_BROADCAST_PREVIEW_ALL),
-        _confirmation_markup(Callback.ADMIN_BROADCAST_CONFIRM_ALL),
+        _format_preview_text(context, _texts(context).ADMIN_BROADCAST_PREVIEW_ALL),
+        _confirmation_markup(context, Callback.ADMIN_BROADCAST_CONFIRM_ALL),
     )
     session.store_preview(chat_id, preview_id)
     return States.ADMIN_BROADCAST_MESSAGE_ALL
@@ -205,8 +210,8 @@ async def broadcast_enter_no_ids_message(update: Update, context: "BotContext") 
         await _edit_broadcast_prompt_message(
             context,
             chat_id,
-            f"{ADMIN_BROADCAST_NO_IDS_INVALID}\n\n{ADMIN_BROADCAST_ENTER_NO_IDS}",
-            _back_markup(),
+            f"{_texts(context).ADMIN_BROADCAST_NO_IDS_INVALID}\n\n{_texts(context).ADMIN_BROADCAST_ENTER_NO_IDS}",
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_SELECT_NO
 
@@ -220,8 +225,8 @@ async def broadcast_enter_no_ids_message(update: Update, context: "BotContext") 
         await _edit_broadcast_prompt_message(
             context,
             chat_id,
-            f"{ADMIN_BROADCAST_NO_IDS_INVALID}\n\n{ADMIN_BROADCAST_ENTER_NO_IDS}",
-            _back_markup(),
+            f"{_texts(context).ADMIN_BROADCAST_NO_IDS_INVALID}\n\n{_texts(context).ADMIN_BROADCAST_ENTER_NO_IDS}",
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_SELECT_NO
     session.set_selected_ids(ids)
@@ -235,7 +240,7 @@ async def broadcast_enter_no_ids_message(update: Update, context: "BotContext") 
         context,
         chat_id,
         prompt_text,
-        _back_markup(),
+        _back_markup(context),
     )
     return States.ADMIN_BROADCAST_MESSAGE_SELECTED
 
@@ -256,7 +261,7 @@ async def broadcast_selected_message(update: Update, context: "BotContext") -> S
             context,
             chat_id,
             "No node operators selected. Please provide node operator IDs first.",
-            _back_markup(),
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_SELECT_NO
     if not text:
@@ -266,7 +271,7 @@ async def broadcast_selected_message(update: Update, context: "BotContext") -> S
             context,
             chat_id,
             f"Message text is required for: {pretty_ids}. Please type the broadcast message.",
-            _back_markup(),
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_MESSAGE_SELECTED
 
@@ -278,18 +283,18 @@ async def broadcast_selected_message(update: Update, context: "BotContext") -> S
             context,
             chat_id,
             "Unable to preview that message. Please try again.",
-            _back_markup(),
+            _back_markup(context),
         )
         return States.ADMIN_BROADCAST_MESSAGE_SELECTED
 
     pretty_ids = ", ".join(sorted(f"#{i}" for i in selected))
     session.set_message_text(text)
-    header = ADMIN_BROADCAST_PREVIEW_SELECTED.format(targets=pretty_ids)
+    header = _texts(context).ADMIN_BROADCAST_PREVIEW_SELECTED.format(targets=pretty_ids)
     await _edit_broadcast_prompt_message(
         context,
         chat_id,
-        _format_preview_text(header),
-        _confirmation_markup(Callback.ADMIN_BROADCAST_CONFIRM_SELECTED),
+        _format_preview_text(context, header),
+        _confirmation_markup(context, Callback.ADMIN_BROADCAST_CONFIRM_SELECTED),
     )
     session.store_preview(chat_id, preview_id)
     return States.ADMIN_BROADCAST_MESSAGE_SELECTED
@@ -306,8 +311,8 @@ async def broadcast_all_confirm(update: Update, context: "BotContext") -> States
     preview_message_id = session.get_preview_message_id()
     if not preview_chat_id or not preview_message_id:
         updated = await query.edit_message_text(
-            text=ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
-            reply_markup=_back_markup(),
+            text=_texts(context).ADMIN_BROADCAST_ENTER_MESSAGE_ALL,
+            reply_markup=_back_markup(context),
         )
         session.store_prompt(updated)
         return States.ADMIN_BROADCAST_MESSAGE_ALL
@@ -317,17 +322,19 @@ async def broadcast_all_confirm(update: Update, context: "BotContext") -> States
     if not targets:
         updated = await query.edit_message_text(
             text="No subscribers to notify.",
-            reply_markup=_back_markup(),
+            reply_markup=_back_markup(context),
         )
         session.store_prompt(updated)
         return States.ADMIN_BROADCAST_MESSAGE_ALL
 
-    sent, failed = await _broadcast_copy_to_chats(context, targets, preview_chat_id, preview_message_id)
+    sent, failed = await _broadcast_copy_to_chats(
+        context, targets, preview_chat_id, preview_message_id
+    )
     logger.info("Admin broadcast (all) attempted: sent=%s failed=%s", sent, failed)
     session.clear_message_text()
     await _delete_preview_message(context)
     result_text = f"Broadcast sent to {sent} chat(s). Failures: {failed}."
-    updated = await query.edit_message_text(text=result_text, reply_markup=_back_markup())
+    updated = await query.edit_message_text(text=result_text, reply_markup=_back_markup(context))
     session.store_prompt(updated)
     return States.ADMIN_BROADCAST_MESSAGE_ALL
 
@@ -343,7 +350,7 @@ async def broadcast_selected_confirm(update: Update, context: "BotContext") -> S
     if not selected:
         updated = await query.edit_message_text(
             text="No node operators selected. Please enter their IDs to continue.",
-            reply_markup=_back_markup(),
+            reply_markup=_back_markup(context),
         )
         session.store_prompt(updated)
         return States.ADMIN_BROADCAST_SELECT_NO
@@ -354,7 +361,7 @@ async def broadcast_selected_confirm(update: Update, context: "BotContext") -> S
         pretty_ids = ", ".join(sorted(f"#{i}" for i in selected))
         updated = await query.edit_message_text(
             text=f"Message text is required for: {pretty_ids}. Please type it.",
-            reply_markup=_back_markup(),
+            reply_markup=_back_markup(context),
         )
         session.store_prompt(updated)
         return States.ADMIN_BROADCAST_MESSAGE_SELECTED
@@ -364,12 +371,14 @@ async def broadcast_selected_confirm(update: Update, context: "BotContext") -> S
     if not targets:
         updated = await query.edit_message_text(
             text="No active subscribers for the selected node operators.",
-            reply_markup=_back_markup(),
+            reply_markup=_back_markup(context),
         )
         session.store_prompt(updated)
         return States.ADMIN_BROADCAST_MESSAGE_SELECTED
 
-    sent, failed = await _broadcast_copy_to_chats(context, targets, preview_chat_id, preview_message_id)
+    sent, failed = await _broadcast_copy_to_chats(
+        context, targets, preview_chat_id, preview_message_id
+    )
     pretty_ids = ", ".join(sorted(f"#{i}" for i in selected))
     logger.info(
         "Admin broadcast (selected) attempted: node_operators=%s sent=%s failed=%s",
@@ -381,7 +390,7 @@ async def broadcast_selected_confirm(update: Update, context: "BotContext") -> S
     session.clear_selected_ids()
     await _delete_preview_message(context)
     result_text = f"Broadcast to {pretty_ids}: sent to {sent} chat(s). Failures: {failed}."
-    updated = await query.edit_message_text(text=result_text, reply_markup=_back_markup())
+    updated = await query.edit_message_text(text=result_text, reply_markup=_back_markup(context))
     session.store_prompt(updated)
     return States.ADMIN_BROADCAST_MESSAGE_SELECTED
 
@@ -420,7 +429,9 @@ async def _edit_broadcast_prompt_message(
         return
     message_id = session.get_prompt_message_id()
     if not message_id:
-        sent = await context.bot.send_message(chat_id=target_chat_id, text=text, reply_markup=reply_markup)
+        sent = await context.bot.send_message(
+            chat_id=target_chat_id, text=text, reply_markup=reply_markup
+        )
         session.store_prompt(sent)
         return
     try:
@@ -433,7 +444,9 @@ async def _edit_broadcast_prompt_message(
         session.store_prompt(updated)
     except BadRequest as exc:
         logger.debug("Failed to edit broadcast prompt message: %s", exc)
-        sent = await context.bot.send_message(chat_id=target_chat_id, text=text, reply_markup=reply_markup)
+        sent = await context.bot.send_message(
+            chat_id=target_chat_id, text=text, reply_markup=reply_markup
+        )
         session.store_prompt(sent)
 
 
@@ -446,21 +459,27 @@ async def _delete_user_message(message: Message | None) -> None:
         logger.debug("Failed to delete admin broadcast input: %s", exc)
 
 
-def _back_markup() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)]])
+def _back_markup(context: "BotContext") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(_texts(context).BUTTON_BACK, callback_data=Callback.BACK.value)]]
+    )
 
 
-def _confirmation_markup(callback: Callback) -> InlineKeyboardMarkup:
+def _confirmation_markup(context: "BotContext", callback: Callback) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton(BUTTON_SEND_BROADCAST, callback_data=callback.value)],
-            [InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)],
+            [
+                InlineKeyboardButton(
+                    _texts(context).BUTTON_SEND_BROADCAST, callback_data=callback.value
+                )
+            ],
+            [InlineKeyboardButton(_texts(context).BUTTON_BACK, callback_data=Callback.BACK.value)],
         ]
     )
 
 
-def _format_preview_text(header: str) -> str:
-    return f"{header}\n\n{ADMIN_BROADCAST_CONFIRM_HINT}\n\nPreview is shown below."
+def _format_preview_text(context: "BotContext", header: str) -> str:
+    return f"{header}\n\n{_texts(context).ADMIN_BROADCAST_CONFIRM_HINT}\n\nPreview is shown below."
 
 
 async def _copy_preview_message(

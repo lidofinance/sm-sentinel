@@ -3,9 +3,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-from eth_typing import ChecksumAddress
-
-from sentinel.module_types import ModuleType
+from sentinel.app.contracts import ContractAddresses
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +30,7 @@ class Config:
     healthcheck_host: str
     healthcheck_port: int
 
-    # Addresses and IDs
-    module_address: ChecksumAddress
-    accounting_address: ChecksumAddress
-    parameters_registry_address: ChecksumAddress
-    vebo_address: ChecksumAddress
-    fee_distributor_address: ChecksumAddress
-    exit_penalties_address: ChecksumAddress
-    lido_locator_address: ChecksumAddress
-    staking_router_address: ChecksumAddress
-    staking_module_id: int
-    module_type: ModuleType
-    csm_version: int
+    contract_addresses: ContractAddresses
 
     # URLs
     etherscan_url: str | None
@@ -135,17 +122,7 @@ async def _build_config_from_env() -> Config:
         web3_socket_provider=web3_socket_provider,
         healthcheck_host=healthcheck_host,
         healthcheck_port=healthcheck_port,
-        module_address=addresses.module,
-        accounting_address=addresses.accounting,
-        parameters_registry_address=addresses.parameters_registry,
-        vebo_address=addresses.vebo,
-        fee_distributor_address=addresses.fee_distributor,
-        exit_penalties_address=addresses.exit_penalties,
-        lido_locator_address=addresses.lido_locator,
-        staking_router_address=addresses.staking_router,
-        staking_module_id=addresses.staking_module_id,
-        module_type=addresses.module_type,
-        csm_version=addresses.csm_version,
+        contract_addresses=addresses,
         etherscan_url=os.getenv("ETHERSCAN_URL"),
         beaconchain_url=os.getenv("BEACONCHAIN_URL"),
         module_ui_url=module_ui_url,
@@ -164,7 +141,9 @@ def get_config() -> Config:
         except RuntimeError:
             _CONFIG = asyncio.run(_build_config_from_env())
         else:
-            raise RuntimeError("get_config() cannot be called from an async context, use get_config_async() instead")
+            raise RuntimeError(
+                "get_config() cannot be called from an async context, use get_config_async() instead"
+            )
     return _CONFIG
 
 

@@ -46,12 +46,16 @@ async def chat_migration(update: Update, context: "BotContext") -> None:
 
 async def add_user_if_required(update: Update, context: "BotContext") -> None:
     chat = update.effective_chat
+    user = update.effective_user
+    if chat is None or user is None:
+        return
+
     storage = context.bot_storage
 
     if chat.type != Chat.PRIVATE or storage.users.contains(chat.id):
         return
 
-    logger.info("%s started a private chat with the bot", update.effective_user.full_name)
+    logger.info("%s started a private chat with the bot", user.full_name)
     storage.users.add(chat.id)
 
 
@@ -88,8 +92,12 @@ async def track_chats(update: Update, context: "BotContext") -> None:
         return
     was_member, is_member = result
 
-    cause_name = update.effective_user.full_name
+    user = update.effective_user
     chat = update.effective_chat
+    if user is None or chat is None:
+        return
+
+    cause_name = user.full_name
     storage = context.bot_storage
     if chat.type == Chat.PRIVATE:
         if not was_member and is_member:

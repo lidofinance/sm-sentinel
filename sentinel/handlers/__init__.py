@@ -49,10 +49,26 @@ def build_conversation_handler() -> ConversationHandler:
                 ),
             ],
             States.FOLLOW_NODE_OPERATOR: [
+                CallbackQueryHandler(
+                    start.follow_node_operator_button,
+                    pattern="^" + start.FOLLOW_OPERATOR_PREFIX + r"\d+$",
+                ),
+                CallbackQueryHandler(
+                    start.follow_node_operator_page,
+                    pattern="^" + start.FOLLOW_OPERATOR_PAGE_PREFIX + r"\d+$",
+                ),
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
                 MessageHandler(text_without_commands, start.follow_node_operator_message),
             ],
             States.UNFOLLOW_NODE_OPERATOR: [
+                CallbackQueryHandler(
+                    start.unfollow_node_operator_button,
+                    pattern="^" + start.UNFOLLOW_OPERATOR_PREFIX + r"\d+$",
+                ),
+                CallbackQueryHandler(
+                    start.unfollow_node_operator_page,
+                    pattern="^" + start.UNFOLLOW_OPERATOR_PAGE_PREFIX + r"\d+$",
+                ),
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
                 MessageHandler(text_without_commands, start.unfollow_node_operator_message),
             ],
@@ -61,8 +77,12 @@ def build_conversation_handler() -> ConversationHandler:
             ],
             States.ADMIN: [
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
-                CallbackQueryHandler(subscriptions, pattern="^" + Callback.ADMIN_SUBSCRIPTIONS.value + "$"),
-                CallbackQueryHandler(broadcast_menu, pattern="^" + Callback.ADMIN_BROADCAST.value + "$"),
+                CallbackQueryHandler(
+                    subscriptions, pattern="^" + Callback.ADMIN_SUBSCRIPTIONS.value + "$"
+                ),
+                CallbackQueryHandler(
+                    broadcast_menu, pattern="^" + Callback.ADMIN_BROADCAST.value + "$"
+                ),
             ],
             States.ADMIN_BROADCAST: [
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
@@ -105,7 +125,9 @@ def register_handlers(runtime: BotRuntime) -> None:
 
     conversation_handler = build_conversation_handler()
 
-    application.add_handler(ChatMemberHandler(tracking.track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
+    application.add_handler(
+        ChatMemberHandler(tracking.track_chats, ChatMemberHandler.MY_CHAT_MEMBER)
+    )
     application.add_handler(conversation_handler)
     application.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, tracking.chat_migration))
     runtime.subscription.register_handlers()

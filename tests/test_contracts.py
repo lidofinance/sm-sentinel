@@ -11,10 +11,7 @@ def test_find_staking_module_id_success():
         (2, "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"),
     ]
 
-    assert (
-        _find_staking_module_id(modules, "0xABCDefAbcdefABCDefABCDEFabcdefABCDefAbcd")
-        == 2
-    )
+    assert _find_staking_module_id(modules, "0xABCDefAbcdefABCDefABCDEFabcdefABCDefAbcd") == 2
 
 
 def test_find_staking_module_id_failure():
@@ -53,11 +50,7 @@ async def test_discover_csm_version_falls_back_to_v2():
     module_contract.functions.getInitializedVersion = lambda: type(
         "Call",
         (),
-        {
-            "call": AsyncMock(
-                side_effect=web3.exceptions.ContractLogicError("missing selector")
-            )
-        },
+        {"call": AsyncMock(side_effect=web3.exceptions.ContractLogicError("missing selector"))},
     )()
 
     assert await _discover_csm_version(module_contract) == 2

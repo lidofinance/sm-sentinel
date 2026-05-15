@@ -1,3 +1,4 @@
+import json
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -31,12 +32,17 @@ def test_health_state_transitions():
 
     health.mark_polling_started()
     health.mark_subscription_active()
+    health.mark_warmup_started()
+    health.mark_warmup_complete()
     health.mark_startup_complete()
 
     snapshot = health.snapshot()
     assert snapshot.startup_complete is True
     assert snapshot.ready is True
     assert snapshot.live is True
+    assert snapshot.warmup_started is True
+    assert snapshot.warmup_complete is True
+    assert snapshot.warmup_error is None
 
     health.mark_subscription_inactive()
     snapshot = health.snapshot()
@@ -47,6 +53,24 @@ def test_health_state_transitions():
     snapshot = health.snapshot()
     assert snapshot.live is False
     assert snapshot.ready is False
+
+
+def test_health_state_warmup_failure_is_reported_without_breaking_readiness():
+    clock = FakeClock()
+    health = HealthState(clock=clock)
+    health.mark_polling_started()
+    health.mark_subscription_active()
+    health.mark_warmup_started()
+    health.mark_warmup_failed("cache unavailable")
+    health.mark_startup_complete()
+
+    snapshot = health.snapshot()
+
+    assert snapshot.ready is True
+    assert snapshot.live is True
+    assert snapshot.warmup_started is True
+    assert snapshot.warmup_complete is True
+    assert snapshot.warmup_error == "cache unavailable"
 
 
 def test_health_state_stale_progress_affects_readiness_only():
@@ -90,10 +114,16 @@ def test_health_server_reports_status_endpoints():
 
         health.mark_polling_started()
         health.mark_subscription_active()
+        health.mark_warmup_started()
+        health.mark_warmup_complete()
         health.mark_startup_complete()
 
         with urlopen(f"{base_url}/ready", timeout=1) as response:
             assert response.status == 200
+            payload = json.loads(response.read())
+            assert payload["warmup_started"] is True
+            assert payload["warmup_complete"] is True
+            assert payload["warmup_error"] is None
 
         health.mark_fatal_error("fatal")
         try:

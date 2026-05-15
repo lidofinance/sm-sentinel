@@ -1,5 +1,5 @@
 [src]
-include = ["src/sentinel"]
+include = ["sentinel"]
 
 [environment]
 python-version = "3.11"
