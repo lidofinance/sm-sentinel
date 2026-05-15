@@ -85,6 +85,7 @@ class Subscription:
         self.update_event_bindings(
             module_adapter.contract_abis,
             notifiable_events=module_adapter.notifiable_events(),
+            side_effect_events=module_adapter.side_effect_events(),
             event_sources=module_adapter.event_sources(),
             topic_abis=module_adapter.topic_abis(),
         )
@@ -94,13 +95,16 @@ class Subscription:
         contract_abis: ContractABIs,
         *,
         notifiable_events: set[str],
+        side_effect_events: set[str],
         event_sources: tuple[EventSource, ...],
         topic_abis: tuple[list[dict], ...],
     ) -> None:
         self.contract_abis = contract_abis
         self.notifiable_events = notifiable_events
         self.event_sources = event_sources
-        self.abi_by_topics = topics_to_follow(self.notifiable_events, *topic_abis)
+        self.abi_by_topics = topics_to_follow(
+            self.notifiable_events | side_effect_events, *topic_abis
+        )
 
     def start_catchup(self, until_block: int) -> None:
         """Hook for subclasses to prepare for catch-up/backfill mode.
@@ -232,10 +236,17 @@ class Subscription:
         batch_size = self.cfg.block_batch_size
         for batch_start in range(start_block, end_block + 1, batch_size):
             batch_end = min(batch_start + batch_size - 1, end_block)
+            logger.info(
+                "Fetching logs for blocks %s-%s across %s sources",
+                batch_start,
+                batch_end,
+                len(self.event_sources),
+            )
 
             for source in self.event_sources:
-                logger.info(
-                    "Fetching logs for %s blocks %s-%s",
+                logger.debug(
+                    "Fetching logs for %s %s blocks %s-%s",
+                    source.name,
                     source.address,
                     batch_start,
                     batch_end,

@@ -1,10 +1,7 @@
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from eth_utils import humanize_wei
-from web3 import AsyncWeb3
 
-from sentinel.chain import ConnectOnDemand
 from sentinel.models import Event, EventHandler
 from sentinel.modules.base_events import BaseModule
 from sentinel.modules.community.adapter import COMMUNITY_NOTIFIABLE_EVENTS
@@ -21,8 +18,6 @@ if TYPE_CHECKING:
     from sentinel.modules.base import ModuleAdapter
 
 COMMUNITY_EVENTS_TO_FOLLOW: dict[str, EventHandler] = {}
-
-CsmVersionSwitcher = Callable[[int], Awaitable[None]]
 
 
 def register_event(event_name: str):
@@ -49,17 +44,10 @@ class CommunityEventMessages(BaseModule):
 
     def __init__(
         self,
-        w3: AsyncWeb3,
         module_adapter: "ModuleAdapter",
-        csm_version_switcher: CsmVersionSwitcher,
-        *,
-        chain: ConnectOnDemand,
         distribution_log_fetcher: "DistributionLogFetcher | None" = None,
     ):
-        self.chain = chain
-        _ = w3
         self.module_adapter = module_adapter
-        self._csm_version_switcher = csm_version_switcher
         self._distribution_log_fetcher = (
             distribution_log_fetcher or default_distribution_log_fetcher
         )
@@ -164,8 +152,6 @@ class CommunityEventMessages(BaseModule):
             return None
         if event.address.lower() != self.module_address.lower():
             return None
-        if self.module_adapter.csm_version < 3:
-            await self._csm_version_switcher(3)
         return template() + await self.event_footer(event)
 
 

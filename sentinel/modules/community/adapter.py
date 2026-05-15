@@ -82,6 +82,7 @@ COMMUNITY_CATALOG_EVENTS_BY_VERSION: dict[int, frozenset[str]] = {
 COMMUNITY_NOTIFIABLE_EVENTS = (
     COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS | COMMUNITY_V3_ONLY_EVENTS
 )
+COMMUNITY_SIDE_EFFECT_EVENTS = frozenset({"Initialized", "NodeOperatorAdded"})
 
 
 class CommunityModuleAdapter(BaseModuleAdapter):
@@ -170,10 +171,8 @@ class CommunityModuleAdapter(BaseModuleAdapter):
     def notifiable_events(self) -> set[str]:
         return set(COMMUNITY_NOTIFIABLE_EVENTS)
 
-    async def is_valid_operator_id(self, operator_id: int) -> bool:
-        async with self.chain:
-            count = await self.contracts.module.functions.getNodeOperatorsCount().call()
-        return 0 <= operator_id < count
+    def side_effect_events(self) -> set[str]:
+        return set(COMMUNITY_SIDE_EFFECT_EVENTS)
 
     def staking_module_id_matches(self, event: Event) -> bool:
         return event.args["stakingModuleId"] == self.addresses.staking_module_id
@@ -210,7 +209,7 @@ class CommunityModuleAdapter(BaseModuleAdapter):
             CONTRACT_ABIS_V3.exit_penalties,
         )
 
-    def build_event_messages(self, w3, csm_version_switcher):
+    def build_event_messages(self):
         from sentinel.modules.community.events import CommunityEventMessages
 
-        return CommunityEventMessages(w3, self, csm_version_switcher, chain=self.chain)
+        return CommunityEventMessages(self)

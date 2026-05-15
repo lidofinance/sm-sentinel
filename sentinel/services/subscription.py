@@ -28,6 +28,7 @@ class TelegramSubscription(Subscription):
         w3,
         application: Application,
         event_messages,
+        event_side_effects,
         *,
         health: HealthState,
         module_adapter: "ModuleAdapter",
@@ -41,6 +42,7 @@ class TelegramSubscription(Subscription):
         )
         self.application = application
         self.event_messages = event_messages
+        self.event_side_effects = event_side_effects
         self._ignore_subscription_events_until_block: int | None = None
 
     def start_catchup(self, until_block: int) -> None:
@@ -88,15 +90,12 @@ class TelegramSubscription(Subscription):
         self.cfg = cfg
         self.event_messages.cfg = cfg
         self.event_messages.reconfigure(module_adapter)
+        self.event_side_effects.reconfigure(module_adapter)
         self.reconfigure_module_adapter(module_adapter)
         logger.info("CSM runtime bindings switched to version %s", csm_version)
 
     async def _prepare_event_for_delivery(self, event: Event) -> None:
-        if event.event != "Initialized":
-            return
-        # Run the control event handler before queueing so subsequent v3 logs can
-        # be decoded with v3 ABI/topic bindings even if Telegram update handling lags.
-        await self.event_messages.get_notification_plan(event)
+        await self.event_side_effects.process_event(event)
 
     async def process_event_log(self, event: Event):
         await self._prepare_event_for_delivery(event)

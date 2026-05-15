@@ -55,6 +55,4 @@ def build_module_adapter_from_config(
     w3: AsyncWeb3,
     chain: ConnectOnDemand,
 ) -> ModuleAdapter:
-    return build_module_adapter_from_addresses(
-        cfg.contract_addresses, w3, cfg.module_ui_url, chain
-    )
+    return build_module_adapter_from_addresses(cfg.contract_addresses, w3, cfg.module_ui_url, chain)

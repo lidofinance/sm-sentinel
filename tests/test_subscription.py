@@ -32,6 +32,15 @@ class _FakeEventMessages:
         self.module_adapter = module_adapter
 
 
+class _FakeEventSideEffects:
+    def __init__(self):
+        self.module_adapter = None
+        self.process_event = AsyncMock()
+
+    def reconfigure(self, module_adapter):
+        self.module_adapter = module_adapter
+
+
 def _make_config(csm_version: int) -> Config:
     return Config(
         filestorage_path=".storage",
@@ -92,6 +101,7 @@ def _make_subscription(event_messages_return=None) -> TelegramSubscription:
     sub.event_messages = SimpleNamespace(
         get_notification_plan=AsyncMock(return_value=event_messages_return),
     )
+    sub.event_side_effects = SimpleNamespace(process_event=AsyncMock())
     return sub
 
 
@@ -110,10 +120,12 @@ async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
         setattr(application, "_module_runtime", runtime)
 
         event_messages = _FakeEventMessages()
+        event_side_effects = _FakeEventSideEffects()
         subscription = TelegramSubscription(
             w3,
             application,
             event_messages,
+            event_side_effects,
             health=HealthState(),
             module_adapter=module_adapter,
         )
@@ -125,6 +137,7 @@ async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
         assert subscription.cfg.contract_addresses.csm_version == 3
         assert event_messages.cfg.contract_addresses.csm_version == 3
         assert event_messages.module_adapter is runtime.module_adapter
+        assert event_side_effects.module_adapter is runtime.module_adapter
         assert "Initialized" in runtime.module_adapter.catalog_events()
         assert "ValidatorSlashingReported" in runtime.module_adapter.catalog_events()
         assert "ELRewardsStealingPenaltyReported" not in runtime.module_adapter.catalog_events()
@@ -136,6 +149,7 @@ async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
 async def test_initialized_event_prepares_runtime_before_queueing_subscription_event():
     sub = TelegramSubscription.__new__(TelegramSubscription)
     sub.event_messages = SimpleNamespace(get_notification_plan=AsyncMock(return_value=None))
+    sub.event_side_effects = SimpleNamespace(process_event=AsyncMock())
     sub.application = SimpleNamespace(update_queue=SimpleNamespace(put=AsyncMock()))
     sub._ignore_subscription_events_until_block = None
 
@@ -143,7 +157,8 @@ async def test_initialized_event_prepares_runtime_before_queueing_subscription_e
 
     await sub.process_event_log_from_subscription(event)
 
-    sub.event_messages.get_notification_plan.assert_awaited_once_with(event)
+    sub.event_side_effects.process_event.assert_awaited_once_with(event)
+    sub.event_messages.get_notification_plan.assert_not_called()
     sub.application.update_queue.put.assert_awaited_once_with(event)
 
 

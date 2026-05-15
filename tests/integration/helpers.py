@@ -13,6 +13,7 @@ from web3.types import RPCEndpoint, TxParams, TxReceipt
 from sentinel.models import Block, Event
 from sentinel.app.health import HealthState
 from sentinel.module_types import ModuleType
+from sentinel.modules.side_effects import ModuleEventSideEffects
 from sentinel.rpc import Subscription
 
 
@@ -94,7 +95,9 @@ async def build_subscription(ws_url: str, http_url: str) -> "EventReplayHarness"
     w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     cfg = await get_config_async()
     try:
-        addresses = await discover_contract_addresses_from_url(http_url, cfg.contract_addresses.module)
+        addresses = await discover_contract_addresses_from_url(
+            http_url, cfg.contract_addresses.module
+        )
     except Exception:
         if cfg.contract_addresses.module_type != ModuleType.CURATED:
             raise
@@ -121,8 +124,10 @@ class EventReplayHarness(Subscription):
             module_adapter=module_adapter,
             backfill_w3=backfill_w3,
         )
-        self.event_messages = module_adapter.build_event_messages(
-            w3, self.handle_csm_version_changed
+        self.event_messages = module_adapter.build_event_messages()
+        self.event_side_effects = ModuleEventSideEffects(
+            module_adapter,
+            self.handle_csm_version_changed,
         )
         self.processed_events: list[tuple[Event, str]] = []
 
@@ -131,6 +136,7 @@ class EventReplayHarness(Subscription):
 
     async def process_event_log(self, event: Event):
         event.tx = HexBytes("0xdeadbeef")
+        await self.event_side_effects.process_event(event)
         self.processed_events.append(
             (event, await self.event_messages.get_notification_plan(event))
         )

@@ -50,21 +50,45 @@ class _FakeCall:
     def __init__(self, value):
         self.value = value
 
-    async def call(self):
+    async def call(self, **kwargs):
+        _ = kwargs
         return self.value
 
 
 class _FakeModuleFunctions:
     def __init__(self, node_operator_count: int):
         self.node_operator_count = node_operator_count
+        self.node_operator_count_calls = 0
 
     def getNodeOperatorsCount(self):
+        self.node_operator_count_calls += 1
         return _FakeCall(self.node_operator_count)
 
 
 class _FakeModuleContract:
     def __init__(self, node_operator_count: int):
         self.functions = _FakeModuleFunctions(node_operator_count)
+
+
+class _FakeMetaRegistryFunctions:
+    def __init__(self, names: dict[int, str | None]):
+        self.names = names
+        self.metadata_ids: list[int] = []
+
+    def getOperatorMetadata(self, node_operator_id: int):
+        self.metadata_ids.append(node_operator_id)
+        return _FakeCall(
+            {
+                "name": self.names.get(node_operator_id),
+                "description": "",
+                "ownerEditsRestricted": False,
+            }
+        )
+
+
+class _FakeMetaRegistry:
+    def __init__(self, names: dict[int, str | None]):
+        self.functions = _FakeMetaRegistryFunctions(names)
 
 
 def _dummy_addresses(module_type: ModuleType) -> ContractAddresses:
@@ -117,6 +141,7 @@ def test_community_module_adapter_instantiation():
         chain=_dummy_chain(),
     )
     assert result.module_type == ModuleType.COMMUNITY
+    assert result.side_effect_events() == {"Initialized", "NodeOperatorAdded"}
 
 
 def test_curated_module_adapter_instantiation():
@@ -145,6 +170,7 @@ def test_curated_module_adapter_instantiation():
     assert "DepositedSigningKeysCountChanged" in result.catalog_events()
     assert "OperatorGroupCreated" in result.catalog_events()
     assert result.catalog_events() == result.notifiable_events()
+    assert result.side_effect_events() == {"NodeOperatorAdded", "OperatorMetadataSet"}
 
 
 def test_build_curated_module_adapter_uses_curated_module_abi():
@@ -262,8 +288,8 @@ async def test_community_module_adapter_validates_operator_ids():
     assert await adapter.is_valid_operator_id(2)
     assert not await adapter.is_valid_operator_id(3)
     assert not await adapter.is_valid_operator_id(-1)
-    assert chain.enter_count == 4
-    assert chain.exit_count == 4
+    assert chain.enter_count == 1
+    assert chain.exit_count == 1
 
 
 @pytest.mark.asyncio
@@ -293,8 +319,88 @@ async def test_curated_module_adapter_validates_operator_ids():
     assert await adapter.is_valid_operator_id(2)
     assert not await adapter.is_valid_operator_id(3)
     assert not await adapter.is_valid_operator_id(-1)
-    assert chain.enter_count == 4
-    assert chain.exit_count == 4
+    assert chain.enter_count == 1
+    assert chain.exit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_curated_module_adapter_lists_labeled_node_operator_options_from_cache():
+    addresses = _dummy_addresses(ModuleType.CURATED)
+    assert isinstance(addresses, CuratedContractAddresses)
+    chain = _FakeChain()
+    meta_registry = _FakeMetaRegistry({0: "Operator Zero", 1: None, 2: "Operator Two"})
+    module_contract = _FakeModuleContract(node_operator_count=3)
+    adapter = CuratedModuleAdapter(
+        addresses=addresses,
+        contracts=CuratedModuleContracts(
+            module=module_contract,
+            accounting=object(),
+            parameters_registry=object(),
+            fee_distributor=object(),
+            exit_penalties=object(),
+            meta_registry=meta_registry,
+            lido_locator=object(),
+            staking_router=object(),
+            vebo=object(),
+        ),
+        contract_abis=CuratedModuleAdapter.contract_abis_for(addresses),
+        module_ui_url=None,
+        chain=chain,
+    )
+
+    await adapter.warm_up()
+    options = await adapter.node_operator_options()
+    label = await adapter.node_operator_label(2)
+    options_again = await adapter.node_operator_options()
+
+    assert [(option.id, option.label) for option in options] == [
+        (0, "#0 - Operator Zero"),
+        (1, "#1"),
+        (2, "#2 - Operator Two"),
+    ]
+    assert options_again == options
+    assert label == "#2 - Operator Two"
+    assert meta_registry.functions.metadata_ids == [0, 1, 2]
+    assert module_contract.functions.node_operator_count_calls == 1
+    assert chain.enter_count == 2
+    assert chain.exit_count == 2
+
+
+@pytest.mark.asyncio
+async def test_curated_module_adapter_uses_label_cache_while_refreshing_operator_count():
+    addresses = _dummy_addresses(ModuleType.CURATED)
+    assert isinstance(addresses, CuratedContractAddresses)
+    module_contract = _FakeModuleContract(node_operator_count=1)
+    meta_registry = _FakeMetaRegistry({0: "Old Name", 1: "New Operator"})
+    adapter = CuratedModuleAdapter(
+        addresses=addresses,
+        contracts=CuratedModuleContracts(
+            module=module_contract,
+            accounting=object(),
+            parameters_registry=object(),
+            fee_distributor=object(),
+            exit_penalties=object(),
+            meta_registry=meta_registry,
+            lido_locator=object(),
+            staking_router=object(),
+            vebo=object(),
+        ),
+        contract_abis=CuratedModuleAdapter.contract_abis_for(addresses),
+        module_ui_url=None,
+        chain=_FakeChain(),
+    )
+
+    await adapter.warm_up()
+    adapter.remember_node_operator_label(0, "New Name")
+    adapter.remember_node_operator_added(1)
+
+    options = await adapter.node_operator_options()
+
+    assert [(option.id, option.label) for option in options] == [
+        (0, "#0 - New Name"),
+        (1, "#1 - New Operator"),
+    ]
+    assert meta_registry.functions.metadata_ids == [0, 1]
 
 
 def test_bot_text_instances_define_common_texts():

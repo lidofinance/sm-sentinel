@@ -208,8 +208,10 @@ async def test_curated_process_blocks_operator_group_created(anvil_launcher):
             "ℹ️ *Operator group created*\n\n"
             "Group id: `1`\n"
             "Added Node Operators:\n"
-            "`\\- \\#0 \\- Attestant \\(BVI\\) Limited: share 10000\n"
-            "\\- \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC: share 0`\n\n"
+            "\\- \\#0 \\- Attestant \\(BVI\\) Limited\n"
+            "  Share: 100%\n"
+            "\\- \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC\n"
+            "  Share: 0%\n\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -227,7 +229,8 @@ async def test_curated_process_blocks_operator_group_updated(anvil_launcher):
                 "Group id: `1`\n"
                 "\n"
                 "Node Operator: `\\#0 \\- Attestant \\(BVI\\) Limited`\n"
-                "Node Operator share changed: `10000 \\-\\> 5000`\n\n"
+                "Node Operator share changed.\n"
+                "Share: `100% \\-\\> 50%`\n\n"
                 "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
                 "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
             ),
@@ -236,7 +239,8 @@ async def test_curated_process_blocks_operator_group_updated(anvil_launcher):
                 "Group id: `1`\n"
                 "\n"
                 "Node Operator: `\\#1 \\- Attestant \\(BVI\\) Limited \\- IODC`\n"
-                "Node Operator share changed: `0 \\-\\> 5000`\n\n"
+                "Node Operator share changed.\n"
+                "Share: `0% \\-\\> 50%`\n\n"
                 "Node Operator: \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC\n"
                 "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
             ),

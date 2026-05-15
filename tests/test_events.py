@@ -141,12 +141,16 @@ class _FakeCuratedAdapter:
             meta_registry=_FakeMetaRegistry(),
         )
         self._notifiable_events = notifiable_events or set()
+        self.remembered_labels: list[tuple[int, str | None]] = []
 
     def catalog_events(self):
         return self._notifiable_events
 
     def notifiable_events(self):
         return self._notifiable_events
+
+    def remember_node_operator_label(self, operator_id: int, name: str | None) -> None:
+        self.remembered_labels.append((operator_id, name))
 
 
 def _set_event_config():
@@ -773,9 +777,7 @@ async def test_curated_operator_group_created_targets_all_added_sub_node_operato
     from sentinel.notifications import NotificationPlan
 
     _set_event_config()
-    meta_registry = _FakeMetaRegistry(
-        metadata_names={10: "Operator Ten", 11: "Operator Eleven"}
-    )
+    meta_registry = _FakeMetaRegistry(metadata_names={10: "Operator Ten", 11: "Operator Eleven"})
     adapter = _FakeCuratedAdapter(
         contracts=SimpleNamespace(
             module=object(),
@@ -808,8 +810,10 @@ async def test_curated_operator_group_created_targets_all_added_sub_node_operato
     assert plan.broadcast_node_operator_ids == {"10", "11"}
     assert "Operator group created" in plan.broadcast
     assert "Added Node Operators" in plan.broadcast
-    assert "Operator Ten: share 4" in plan.broadcast
-    assert "Operator Eleven: share 1" in plan.broadcast
+    assert "Operator Ten" in plan.broadcast
+    assert "Share: 0\\.04%" in plan.broadcast
+    assert "Operator Eleven" in plan.broadcast
+    assert "Share: 0\\.01%" in plan.broadcast
     assert meta_registry.metadata_ids == [10, 11]
     assert [call.calls for call in meta_registry.metadata_calls] == [
         [{"block_identifier": 123}],
@@ -869,11 +873,12 @@ async def test_curated_operator_group_updated_targets_only_changed_sub_node_oper
     assert set(plan.per_node_operator) == {"10", "11", "12"}
     assert "Node Operator: `\\#10 \\- Operator Ten`" in plan.per_node_operator["10"]
     assert "Node Operator share changed" in plan.per_node_operator["10"]
-    assert "`4 \\-\\> 5`" in plan.per_node_operator["10"]
+    assert "`0\\.04% \\-\\> 0\\.05%`" in plan.per_node_operator["10"]
     assert "Node Operator: `\\#11 \\- Operator Eleven`" in plan.per_node_operator["11"]
     assert "Node Operator removed from this group" in plan.per_node_operator["11"]
     assert "Node Operator: `\\#12 \\- Operator Twelve`" in plan.per_node_operator["12"]
-    assert "Node Operator added with share: `2`" in plan.per_node_operator["12"]
+    assert "Node Operator added" in plan.per_node_operator["12"]
+    assert "Share: `0\\.02%`" in plan.per_node_operator["12"]
 
 
 @pytest.mark.asyncio
@@ -918,8 +923,10 @@ async def test_curated_operator_group_cleared_lists_all_affected_node_operators(
     assert plan.broadcast_node_operator_ids == {"10", "11"}
     assert "Operator group cleared" in plan.broadcast
     assert "Affected Node Operators" in plan.broadcast
-    assert "Operator Ten: share 4" in plan.broadcast
-    assert "Operator Eleven: share 1" in plan.broadcast
+    assert "Operator Ten" in plan.broadcast
+    assert "Share: 0\\.04%" in plan.broadcast
+    assert "Operator Eleven" in plan.broadcast
+    assert "Share: 0\\.01%" in plan.broadcast
     assert "nodeOperatorId" not in plan.broadcast
 
 
@@ -1103,12 +1110,10 @@ def test_topics_to_follow_rejects_incompatible_same_topic_abis():
 
 
 @pytest.mark.asyncio
-async def test_initialized_control_event_switches_runtime_to_v3():
+async def test_initialized_control_event_renders_v3_notification():
     from sentinel.modules.community.events import CommunityEventMessages
     from sentinel.notifications import NotificationPlan
     from sentinel.models import Event
-
-    switched_versions: list[int] = []
 
     class DummyAdapter:
         csm_version = 2
@@ -1119,9 +1124,6 @@ async def test_initialized_control_event_switches_runtime_to_v3():
         def notifiable_events(self):
             return {"Initialized"}
 
-    async def switch_csm_version(csm_version: int) -> None:
-        switched_versions.append(csm_version)
-
     set_config(SimpleNamespace(module_ui_url="https://csm.lido.fi"))
     try:
         event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
@@ -1129,7 +1131,6 @@ async def test_initialized_control_event_switches_runtime_to_v3():
         event_messages.cfg = SimpleNamespace(etherscan_tx_url_template="https://etherscan.io/tx/{}")
         event_messages.module_adapter = DummyAdapter()
         event_messages.module_address = "0x0000000000000000000000000000000000000abc"
-        event_messages._csm_version_switcher = switch_csm_version
 
         event = Event(
             event="Initialized",
@@ -1143,7 +1144,6 @@ async def test_initialized_control_event_switches_runtime_to_v3():
 
         assert isinstance(plan, NotificationPlan)
         assert "CSM v3 is live" in plan.broadcast
-        assert switched_versions == [3]
     finally:
         clear_config()
 

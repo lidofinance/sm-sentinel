@@ -238,11 +238,15 @@ ADMIN_PRIVATE_CHAT_REQUIRED = "Admin tools are only available in a private chat 
 NO_NEW_BLOCKS_ADMIN_ALERT = (
     "⚠️ No new blocks processed in the last {minutes} minutes. Latest block: {block}"
 )
-FOLLOW_NODE_OPERATOR_TEXT = "Please enter the Node Operator id you want to follow:"
-FOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operators you are following: {}" + nl()
-UNFOLLOW_NODE_OPERATOR_TEXT = "Please enter the Node Operator id you want to unfollow:"
+FOLLOW_NODE_OPERATOR_TEXT = (
+    "Please enter one or more Node Operator IDs you want to follow, separated by commas:"
+)
+FOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operator IDs you are following:\n{}" + nl(2)
+UNFOLLOW_NODE_OPERATOR_TEXT = (
+    "Please enter one or more Node Operator IDs you want to unfollow, separated by commas:"
+)
 UNFOLLOW_NODE_OPERATOR_NOT_FOLLOWING = "You are not following any Node Operators."
-UNFOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operators you are following: {}" + nl()
+UNFOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operator IDs you are following:\n{}" + nl(2)
 NODE_OPERATOR_FOLLOWED = "You are now following Node Operator #{}"
 NODE_OPERATOR_CANT_FOLLOW = "Invalid Node Operator id. Please enter the correct id."
 NODE_OPERATOR_UNFOLLOWED = "You are no longer following Node Operator #{}"

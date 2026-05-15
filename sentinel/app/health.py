@@ -24,6 +24,9 @@ class HealthSnapshot:
     live: bool
     polling_started: bool
     subscription_active: bool
+    warmup_started: bool
+    warmup_complete: bool
+    warmup_error: str | None
     shutting_down: bool
     fatal_error: str | None
     heartbeat_age_seconds: float
@@ -39,6 +42,9 @@ class HealthState:
         self._startup_complete = False
         self._polling_started = False
         self._subscription_active = False
+        self._warmup_started = False
+        self._warmup_complete = False
+        self._warmup_error: str | None = None
         self._shutting_down = False
         self._fatal_error: str | None = None
         self._last_heartbeat_at = now
@@ -73,6 +79,32 @@ class HealthState:
         with self._lock:
             self._startup_complete = True
             self._last_progress_at = now
+            self._last_heartbeat_at = now
+
+    def mark_warmup_started(self) -> None:
+        now = self._clock()
+        with self._lock:
+            self._warmup_started = True
+            self._warmup_complete = False
+            self._warmup_error = None
+            self._last_heartbeat_at = now
+
+    def mark_warmup_complete(self) -> None:
+        now = self._clock()
+        with self._lock:
+            self._warmup_started = True
+            self._warmup_complete = True
+            self._warmup_error = None
+            self._last_progress_at = now
+            self._last_heartbeat_at = now
+
+    def mark_warmup_failed(self, exc: BaseException | str) -> None:
+        message = str(exc)
+        now = self._clock()
+        with self._lock:
+            self._warmup_started = True
+            self._warmup_complete = True
+            self._warmup_error = message or exc.__class__.__name__
             self._last_heartbeat_at = now
 
     def mark_shutdown_requested(self) -> None:
@@ -121,6 +153,9 @@ class HealthState:
                 live=live,
                 polling_started=self._polling_started,
                 subscription_active=self._subscription_active,
+                warmup_started=self._warmup_started,
+                warmup_complete=self._warmup_complete,
+                warmup_error=self._warmup_error,
                 shutting_down=self._shutting_down,
                 fatal_error=self._fatal_error,
                 heartbeat_age_seconds=heartbeat_age,
@@ -181,6 +216,9 @@ class HealthServer:
                         "live": snapshot.live,
                         "polling_started": snapshot.polling_started,
                         "subscription_active": snapshot.subscription_active,
+                        "warmup_started": snapshot.warmup_started,
+                        "warmup_complete": snapshot.warmup_complete,
+                        "warmup_error": snapshot.warmup_error,
                         "shutting_down": snapshot.shutting_down,
                         "fatal_error": snapshot.fatal_error,
                         "heartbeat_age_seconds": round(snapshot.heartbeat_age_seconds, 3),

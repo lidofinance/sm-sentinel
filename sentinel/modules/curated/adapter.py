@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -11,8 +12,11 @@ from sentinel.app.contracts import (
 )
 from sentinel.chain import ConnectOnDemand
 from sentinel.module_types import ModuleType
-from sentinel.modules.base import BaseModuleAdapter, EventSource
+from sentinel.modules.base import BaseModuleAdapter, EventSource, NodeOperatorOption
 from sentinel.modules.curated.texts import CuratedTexts
+from sentinel.modules.formatting import read_field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +91,7 @@ CURATED_EVENTS = frozenset(
 
 CURATED_FEE_DISTRIBUTOR_EVENTS = frozenset({"DistributionLogUpdated"})
 CURATED_VEBO_EVENTS = frozenset({"ValidatorExitRequest"})
+CURATED_SIDE_EFFECT_EVENTS = frozenset({"NodeOperatorAdded", "OperatorMetadataSet"})
 
 
 class CuratedModuleAdapter(BaseModuleAdapter):
@@ -115,6 +120,7 @@ class CuratedModuleAdapter(BaseModuleAdapter):
         )
         self.curated_addresses = addresses
         self.curated_contract_abis = contract_abis
+        self._node_operator_label_cache: dict[int, str] = {}
 
     @staticmethod
     def contract_abis_for(addresses: ContractAddresses) -> CuratedContractABIs:
@@ -176,10 +182,78 @@ class CuratedModuleAdapter(BaseModuleAdapter):
     def notifiable_events(self) -> set[str]:
         return set(CURATED_EVENTS)
 
-    async def is_valid_operator_id(self, operator_id: int) -> bool:
+    def side_effect_events(self) -> set[str]:
+        return set(CURATED_SIDE_EFFECT_EVENTS)
+
+    async def node_operator_label(self, operator_id: int) -> str:
+        cached = self._node_operator_label_cache.get(operator_id)
+        if cached is not None:
+            return cached
+
         async with self.chain:
-            count = await self.contracts.module.functions.getNodeOperatorsCount().call()
-        return 0 <= operator_id < count
+            label = await self._fetch_node_operator_label(operator_id)
+        return label
+
+    async def node_operator_options(self) -> tuple[NodeOperatorOption, ...]:
+        if self._node_operators_count_cache is None:
+            async with self.chain:
+                self._node_operators_count_cache = await self._fetch_node_operators_count()
+
+        missing_label_ids = [
+            node_operator_id
+            for node_operator_id in range(self._node_operators_count_cache)
+            if node_operator_id not in self._node_operator_label_cache
+        ]
+        if missing_label_ids:
+            async with self.chain:
+                for node_operator_id in missing_label_ids:
+                    await self._fetch_node_operator_label(node_operator_id)
+
+        return tuple(
+            NodeOperatorOption(
+                id=node_operator_id,
+                label=self._node_operator_label_cache.get(
+                    node_operator_id,
+                    self._format_node_operator_label(node_operator_id, None),
+                ),
+            )
+            for node_operator_id in range(self._node_operators_count_cache)
+        )
+
+    async def warm_up(self) -> None:
+        await self.node_operator_options()
+
+    def remember_node_operator_label(self, operator_id: int, name: str | None) -> None:
+        label = self._format_node_operator_label(operator_id, name)
+        self._node_operator_label_cache[operator_id] = label
+
+    async def _fetch_node_operator_label(self, operator_id: int) -> str:
+        cached = self._node_operator_label_cache.get(operator_id)
+        if cached is not None:
+            return cached
+
+        try:
+            metadata = await self.contracts.meta_registry.functions.getOperatorMetadata(
+                operator_id
+            ).call()
+        except Exception:
+            logger.warning(
+                "Failed to fetch Curated node operator metadata",
+                extra={"node_operator_id": operator_id},
+                exc_info=True,
+            )
+            return self._format_node_operator_label(operator_id, None)
+
+        name = read_field(metadata, "name", 0) or None
+        label = self._format_node_operator_label(operator_id, name)
+        self._node_operator_label_cache[operator_id] = label
+        return label
+
+    @staticmethod
+    def _format_node_operator_label(operator_id: int, name: str | None) -> str:
+        if not name:
+            return f"#{operator_id}"
+        return f"#{operator_id} - {name}"
 
     def staking_module_id_matches(self, event) -> bool:
         return event.args["stakingModuleId"] == self.addresses.staking_module_id
@@ -216,9 +290,7 @@ class CuratedModuleAdapter(BaseModuleAdapter):
             self.curated_contract_abis.meta_registry,
         )
 
-    def build_event_messages(self, w3, csm_version_switcher):
-        _ = w3
-        _ = csm_version_switcher
+    def build_event_messages(self):
         from sentinel.modules.curated.events import CuratedEventMessages
 
         return CuratedEventMessages(self)

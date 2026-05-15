@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from sentinel.jobs import JobContext
     from sentinel.notifications import EventMessageEngine
     from sentinel.modules.base import ModuleAdapter
+    from sentinel.modules.side_effects import ModuleEventSideEffects
     from sentinel.services.subscription import TelegramSubscription
 
 
@@ -25,6 +26,7 @@ class BotRuntime:
     application: "Application"
     subscription: "TelegramSubscription"
     event_messages: "EventMessageEngine"
+    event_side_effects: "ModuleEventSideEffects"
     job_context: "JobContext"
     module_adapter: "ModuleAdapter"
     chain: "ConnectOnDemand"

@@ -49,10 +49,26 @@ def build_conversation_handler() -> ConversationHandler:
                 ),
             ],
             States.FOLLOW_NODE_OPERATOR: [
+                CallbackQueryHandler(
+                    start.follow_node_operator_button,
+                    pattern="^" + start.FOLLOW_OPERATOR_PREFIX + r"\d+$",
+                ),
+                CallbackQueryHandler(
+                    start.follow_node_operator_page,
+                    pattern="^" + start.FOLLOW_OPERATOR_PAGE_PREFIX + r"\d+$",
+                ),
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
                 MessageHandler(text_without_commands, start.follow_node_operator_message),
             ],
             States.UNFOLLOW_NODE_OPERATOR: [
+                CallbackQueryHandler(
+                    start.unfollow_node_operator_button,
+                    pattern="^" + start.UNFOLLOW_OPERATOR_PREFIX + r"\d+$",
+                ),
+                CallbackQueryHandler(
+                    start.unfollow_node_operator_page,
+                    pattern="^" + start.UNFOLLOW_OPERATOR_PAGE_PREFIX + r"\d+$",
+                ),
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
                 MessageHandler(text_without_commands, start.unfollow_node_operator_message),
             ],

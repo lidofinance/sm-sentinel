@@ -238,11 +238,17 @@ ADMIN_PRIVATE_CHAT_REQUIRED = (
 NO_NEW_BLOCKS_ADMIN_ALERT = (
     "⚠️ No new blocks processed in the last {minutes} minutes. Latest block: {block}"
 )
-FOLLOW_NODE_OPERATOR_TEXT = "Please enter the Node Operator id you want to follow:"
-FOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operators you are following: {}\n"
-UNFOLLOW_NODE_OPERATOR_TEXT = "Please enter the Node Operator id you want to unfollow:"
+FOLLOW_NODE_OPERATOR_TEXT = (
+    "Choose a Curated Node Operator below, or enter one or more Node Operator IDs "
+    "separated by commas:"
+)
+FOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operators you are following:\n{}\n\n"
+UNFOLLOW_NODE_OPERATOR_TEXT = (
+    "Choose a Curated Node Operator below, or enter one or more Node Operator IDs "
+    "separated by commas:"
+)
 UNFOLLOW_NODE_OPERATOR_NOT_FOLLOWING = "You are not following any Node Operators."
-UNFOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operators you are following: {}\n"
+UNFOLLOW_NODE_OPERATOR_FOLLOWING = "Node Operators you are following:\n{}\n\n"
 NODE_OPERATOR_FOLLOWED = "You are now following Node Operator #{}"
 NODE_OPERATOR_CANT_FOLLOW = "Invalid Node Operator id. Please enter the correct id."
 NODE_OPERATOR_UNFOLLOWED = "You are no longer following Node Operator #{}"
@@ -914,9 +920,18 @@ def _format_sub_node_operators(sub_node_operators) -> str:
     if not sub_node_operators:
         return "none"
     return "\n".join(
-        f"- {_operator_label(operator)}: share {read_field(operator, 'share', 1)}"
+        f"- {_operator_label(operator)}\n  Share: {_format_basis_points_percent(read_field(operator, 'share', 1))}"
         for operator in sub_node_operators
     )
+
+
+def _format_basis_points_percent(value) -> str:
+    basis_points = int(value)
+    whole = basis_points // 100
+    fraction = basis_points % 100
+    if fraction == 0:
+        return f"{whole}%"
+    return f"{whole}.{fraction:02d}".rstrip("0") + "%"
 
 
 def _operator_label(operator) -> str:
@@ -938,12 +953,14 @@ def operator_group_created(group_id, sub_node_operators):
         nl(1),
         "Added Node Operators:",
         nl(1),
-        Code(_format_sub_node_operators(sub_node_operators)),
+        _format_sub_node_operators(sub_node_operators),
     )
 
 
 @register_event_message("OperatorGroupUpdated")
-def operator_group_updated(group_id, node_operator_label, change_kind, old_share=None, new_share=None):
+def operator_group_updated(
+    group_id, node_operator_label, change_kind, old_share=None, new_share=None
+):
     title_prefix = "🚨 " if change_kind == "removed" else "ℹ️ "
     parts: list = [
         title_prefix,
@@ -958,12 +975,24 @@ def operator_group_updated(group_id, node_operator_label, change_kind, old_share
     ]
     match change_kind:
         case "added":
-            parts.extend(["Node Operator added with share: ", Code(str(new_share))])
+            parts.extend(
+                [
+                    "Node Operator added.",
+                    nl(),
+                    "Share: ",
+                    Code(_format_basis_points_percent(new_share)),
+                ]
+            )
         case "changed":
             parts.extend(
                 [
-                    "Node Operator share changed: ",
-                    Code(f"{old_share} -> {new_share}"),
+                    "Node Operator share changed.",
+                    nl(),
+                    "Share: ",
+                    Code(
+                        f"{_format_basis_points_percent(old_share)} -> "
+                        f"{_format_basis_points_percent(new_share)}"
+                    ),
                 ]
             )
         case "removed":
@@ -982,7 +1011,7 @@ def operator_group_cleared(group_id, sub_node_operators):
         nl(1),
         "Affected Node Operators:",
         nl(1),
-        Code(_format_sub_node_operators(sub_node_operators)),
+        _format_sub_node_operators(sub_node_operators),
     )
 
 
