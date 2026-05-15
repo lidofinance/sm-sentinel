@@ -1,9 +1,23 @@
 import asyncio
+import subprocess
+import sys
 
 import pytest
 
 from sentinel.config import clear_config, get_config_async, get_healthcheck_bind_from_env
 from sentinel.module_types import ModuleType
+
+
+def test_config_can_be_imported_cold():
+    result = subprocess.run(
+        [sys.executable, "-c", "import sentinel.config"],
+        cwd="/Users/skhomuti/csm-bot/csm-watcher",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio
@@ -31,7 +45,7 @@ async def test_get_config_async_retries_when_rpc_times_out(monkeypatch, fake_con
     cfg = await get_config_async()
 
     assert attempts == 2
-    assert cfg.module_address == "0x0000000000000000000000000000000000000001"
+    assert cfg.contract_addresses.module == "0x0000000000000000000000000000000000000001"
     clear_config()
 
 
@@ -47,9 +61,9 @@ async def test_get_config_async_prefers_module_envs(monkeypatch, stub_discover_c
 
     cfg = await get_config_async()
 
-    assert cfg.module_address == "0x0000000000000000000000000000000000000001"
+    assert cfg.contract_addresses.module == "0x0000000000000000000000000000000000000001"
     assert cfg.module_ui_url == "https://module.example"
-    assert cfg.module_type == ModuleType.COMMUNITY
+    assert cfg.contract_addresses.module_type == ModuleType.COMMUNITY
     clear_config()
 
 

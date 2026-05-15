@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from hexbytes import HexBytes
@@ -12,6 +12,7 @@ from web3.types import RPCEndpoint, TxParams, TxReceipt
 
 from sentinel.models import Block, Event
 from sentinel.app.health import HealthState
+from sentinel.module_types import ModuleType
 from sentinel.rpc import Subscription
 
 
@@ -83,6 +84,8 @@ async def stop_anvil(instance: AnvilInstance) -> None:
 
 async def build_subscription(ws_url: str, http_url: str) -> "EventReplayHarness":
     from sentinel.config import get_config_async
+    from sentinel.config import set_config
+    from sentinel.app.contracts import discover_contract_addresses_from_url
     from sentinel.app.module_adapter import build_module_adapter_from_config
     from sentinel.chain import ConnectOnDemand
 
@@ -90,6 +93,14 @@ async def build_subscription(ws_url: str, http_url: str) -> "EventReplayHarness"
     backfill_w3 = AsyncWeb3(AsyncHTTPProvider(http_url))
     w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     cfg = await get_config_async()
+    try:
+        addresses = await discover_contract_addresses_from_url(http_url, cfg.contract_addresses.module)
+    except Exception:
+        if cfg.contract_addresses.module_type != ModuleType.CURATED:
+            raise
+        addresses = cfg.contract_addresses
+    cfg = replace(cfg, contract_addresses=addresses)
+    set_config(cfg)
     module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
     return EventReplayHarness(persistent_w3, w3, backfill_w3, module_adapter)
 
@@ -128,11 +139,17 @@ class EventReplayHarness(Subscription):
         pass
 
     async def disconnect(self) -> None:
-        provider = self._w3.provider
-        if provider is None:
-            return
-        with suppress(Exception):
-            await provider.disconnect()
+        event_messages_w3 = getattr(getattr(self.event_messages, "chain", None), "w3", None)
+        providers = [
+            self._w3.provider,
+            self._backfill_w3.provider,
+            event_messages_w3.provider if event_messages_w3 is not None else None,
+        ]
+        for provider in providers:
+            if provider is None or not hasattr(provider, "disconnect"):
+                continue
+            with suppress(Exception):
+                await provider.disconnect()
 
 
 def _build_web3(provider_url: str) -> AsyncWeb3:
@@ -168,8 +185,9 @@ async def replay_transaction_on_anvil(
             raise exc
     finally:
         provider = fork_w3.provider
-        if isinstance(provider, WebSocketProvider):
-            await provider.disconnect()
+        if hasattr(provider, "disconnect"):
+            with suppress(Exception):
+                await provider.disconnect()
 
     local_w3 = AsyncWeb3(AsyncHTTPProvider(anvil_http_url))
 
@@ -186,6 +204,8 @@ async def replay_transaction_on_anvil(
             await local_w3.provider.make_request(
                 RPCEndpoint("anvil_stopImpersonatingAccount"), [from_address]
             )
+        with suppress(Exception):
+            await local_w3.provider.disconnect()
 
     return receipt
 

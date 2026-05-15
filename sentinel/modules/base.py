@@ -4,9 +4,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from eth_typing import ChecksumAddress
 
-from sentinel.app.contracts import ContractAddresses
+from sentinel.app.contracts import ContractABIs, ContractAddresses
 from sentinel.chain import ConnectOnDemand
-from sentinel.models import ContractABIs
 from sentinel.module_types import ModuleType
 from sentinel.modules.texts import BotTexts
 

@@ -3,9 +3,15 @@ from typing import ClassVar
 
 from web3 import AsyncWeb3
 
-from sentinel.app.contracts import ContractAddresses
+from sentinel.app.contracts import (
+    CONTRACT_ABIS_V2,
+    CONTRACT_ABIS_V3,
+    CommunityContractAddresses,
+    CommunityContractABIs,
+    ContractAddresses,
+)
 from sentinel.chain import ConnectOnDemand
-from sentinel.models import CONTRACT_ABIS_V2, CONTRACT_ABIS_V3, ContractABIs, Event
+from sentinel.models import Event
 from sentinel.module_types import ModuleType
 from sentinel.modules.base import BaseModuleAdapter, EventSource
 from sentinel.modules.community.texts import CommunityTexts
@@ -88,10 +94,10 @@ class CommunityModuleAdapter(BaseModuleAdapter):
     def __init__(
         self,
         *,
-        addresses: ContractAddresses,
+        addresses: CommunityContractAddresses,
         contracts: CommunityModuleContracts,
         module_ui_url: str | None,
-        contract_abis: ContractABIs,
+        contract_abis: CommunityContractABIs,
         chain: ConnectOnDemand,
     ) -> None:
         if addresses.module_type != ModuleType.COMMUNITY:
@@ -105,7 +111,7 @@ class CommunityModuleAdapter(BaseModuleAdapter):
         )
 
     @staticmethod
-    def contract_abis_for(addresses: ContractAddresses) -> ContractABIs:
+    def contract_abis_for(addresses: ContractAddresses) -> CommunityContractABIs:
         if addresses.csm_version == 3:
             return CONTRACT_ABIS_V3
         return CONTRACT_ABIS_V2
@@ -113,8 +119,8 @@ class CommunityModuleAdapter(BaseModuleAdapter):
     @staticmethod
     def build_contracts(
         w3: AsyncWeb3,
-        addresses: ContractAddresses,
-        contract_abis: ContractABIs,
+        addresses: CommunityContractAddresses,
+        contract_abis: CommunityContractABIs,
     ) -> CommunityModuleContracts:
         return CommunityModuleContracts(
             module=w3.eth.contract(

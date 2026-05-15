@@ -17,12 +17,12 @@ from web3._utils.events import get_event_data
 from web3.types import EventData, FilterParams
 from websockets import ConnectionClosed
 
+from sentinel.app.contracts import ContractABIs
 from sentinel.app.health import HealthState
 from sentinel.config import Config, get_config
 from sentinel.models import (
     Event,
     Block,
-    ContractABIs,
 )
 from sentinel.modules.base import EventSource, ModuleAdapter
 

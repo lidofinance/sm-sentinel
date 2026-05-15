@@ -18,6 +18,8 @@ from hexbytes import HexBytes
 
 
 class _DummyConnectProvider:
+    w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+
     async def __aenter__(self):
         return None
 
@@ -36,6 +38,86 @@ class _FakeFetcher:
         if self.exc is not None:
             raise self.exc
         return self.result
+
+
+class _FakeCall:
+    def __init__(self, value):
+        self.value = value
+        self.calls: list[dict] = []
+
+    async def call(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.value
+
+
+class _FakeMetaRegistry:
+    def __init__(self, group_info):
+        self.group_ids: list[int] = []
+        self.call = _FakeCall(group_info)
+        self.functions = SimpleNamespace(getOperatorGroup=self.get_operator_group)
+
+    def get_operator_group(self, group_id: int):
+        self.group_ids.append(group_id)
+        return self.call
+
+
+class _FakeCuratedModule:
+    def __init__(self, operators_count: int):
+        self.operators_count_call = _FakeCall(operators_count)
+        self.functions = SimpleNamespace(getNodeOperatorsCount=self.get_node_operators_count)
+
+    def get_node_operators_count(self):
+        return self.operators_count_call
+
+
+class _FakeCuratedAccounting:
+    def __init__(self, operator_curve_ids: dict[int, int]):
+        self.operator_curve_ids = operator_curve_ids
+        self.curve_id_calls: list[int] = []
+        self.curve_id_call_objects: list[_FakeCall] = []
+        self.functions = SimpleNamespace(getBondCurveId=self.get_bond_curve_id)
+
+    def get_bond_curve_id(self, node_operator_id: int):
+        self.curve_id_calls.append(node_operator_id)
+        call = _FakeCall(self.operator_curve_ids[node_operator_id])
+        self.curve_id_call_objects.append(call)
+        return call
+
+
+class _FakeCuratedAdapter:
+    csm_version = 3
+
+    def __init__(self, *, contracts=None, notifiable_events: set[str] | None = None):
+        self.chain = _DummyConnectProvider()
+        self.addresses = SimpleNamespace(
+            module="0x0000000000000000000000000000000000000001",
+            accounting="0x0000000000000000000000000000000000000002",
+            parameters_registry="0x0000000000000000000000000000000000000003",
+        )
+        self.contracts = contracts or SimpleNamespace(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            meta_registry=object(),
+        )
+        self._notifiable_events = notifiable_events or set()
+
+    def catalog_events(self):
+        return self._notifiable_events
+
+    def notifiable_events(self):
+        return self._notifiable_events
+
+
+def _set_event_config():
+    set_config(
+        SimpleNamespace(
+            beaconchain_url_template="https://beaconcha.in/validator/{}",
+            etherscan_block_url_template="https://etherscan.io/block/{}",
+            etherscan_tx_url_template="https://etherscan.io/tx/{}",
+            module_ui_url="https://lido.fi",
+        )
+    )
 
 
 def test_event_mappings_are_complete():
@@ -459,9 +541,223 @@ async def test_get_notification_plan_sets_node_operator_target():
     assert plan.broadcast is not None
 
 
+def test_curated_event_messages_reconfigure_extends_base_bindings():
+    from sentinel.modules.curated.events import CuratedEventMessages
+
+    _set_event_config()
+    contracts = SimpleNamespace(
+        module=object(),
+        accounting=object(),
+        parameters_registry=object(),
+        meta_registry=object(),
+    )
+    adapter = _FakeCuratedAdapter(contracts=contracts)
+
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+
+    assert event_messages.module_adapter is adapter
+    assert event_messages.chain is adapter.chain
+    assert event_messages.module_address == adapter.addresses.module
+    assert event_messages.accounting_address == adapter.addresses.accounting
+    assert event_messages.parameters_registry_address == adapter.addresses.parameters_registry
+    assert event_messages.module is contracts.module
+    assert event_messages.accounting is contracts.accounting
+    assert event_messages.parametersRegistry is contracts.parameters_registry
+    assert event_messages.meta_registry is contracts.meta_registry
+
+
+@pytest.mark.asyncio
+async def test_curated_get_notification_plan_uses_inherited_base_handler():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    adapter = _FakeCuratedAdapter(notifiable_events={"DepositedSigningKeysCountChanged"})
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="DepositedSigningKeysCountChanged",
+        args={"nodeOperatorId": 42, "depositedKeysCount": 3},
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids == {"42"}
+    assert "Keys were deposited" in plan.broadcast
+    assert "New deposited keys count: 3" in plan.broadcast
+    assert "nodeOperatorId: 42" in plan.broadcast
+
+
+@pytest.mark.asyncio
+async def test_curated_bond_deposited_eth_formats_tx_only_message():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    adapter = _FakeCuratedAdapter(notifiable_events={"BondDepositedETH"})
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="BondDepositedETH",
+        args={"from": "0x0000000000000000000000000000000000000abc", "amount": 10**18},
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids is None
+    assert "Bond deposited" in plan.broadcast
+    assert "Asset: `ETH`" in plan.broadcast
+    assert "Amount: `1 ether`" in plan.broadcast
+    assert "nodeOperatorId" not in plan.broadcast
+    assert "[Transaction](https://etherscan.io/tx/0xdeadbeef)" in plan.broadcast
+
+
+@pytest.mark.asyncio
+async def test_curated_operator_group_created_targets_all_added_sub_node_operators():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    adapter = _FakeCuratedAdapter(notifiable_events={"OperatorGroupCreated"})
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="OperatorGroupCreated",
+        args={
+            "groupId": 7,
+            "groupInfo": {
+                "subNodeOperators": [
+                    {"nodeOperatorId": 10, "share": 4},
+                    {"nodeOperatorId": 11, "share": 1},
+                ]
+            },
+        },
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids == {"10", "11"}
+    assert "Operator group created" in plan.broadcast
+    assert "Added Node Operators" in plan.broadcast
+    assert "#10: share 4" in plan.broadcast
+    assert "#11: share 1" in plan.broadcast
+
+
+@pytest.mark.asyncio
+async def test_curated_operator_group_updated_targets_only_changed_sub_node_operators():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    meta_registry = _FakeMetaRegistry(
+        {
+            "subNodeOperators": [
+                {"nodeOperatorId": 10, "share": 4},
+                {"nodeOperatorId": 11, "share": 1},
+            ]
+        }
+    )
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            meta_registry=meta_registry,
+        ),
+        notifiable_events={"OperatorGroupUpdated"},
+    )
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="OperatorGroupUpdated",
+        args={
+            "groupId": 7,
+            "groupInfo": {
+                "subNodeOperators": [
+                    {"nodeOperatorId": 10, "share": 5},
+                    {"nodeOperatorId": 12, "share": 2},
+                ]
+            },
+        },
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert meta_registry.group_ids == [7]
+    assert meta_registry.call.calls == [{"block_identifier": 122}]
+    assert plan.broadcast is None
+    assert plan.broadcast_node_operator_ids == {"10", "11", "12"}
+    assert set(plan.per_node_operator) == {"10", "11", "12"}
+    assert "Node Operator: `\\#10`" in plan.per_node_operator["10"]
+    assert "Node Operator share changed" in plan.per_node_operator["10"]
+    assert "`4 \\-\\> 5`" in plan.per_node_operator["10"]
+    assert "Node Operator: `\\#11`" in plan.per_node_operator["11"]
+    assert "Node Operator removed from this group" in plan.per_node_operator["11"]
+    assert "Node Operator: `\\#12`" in plan.per_node_operator["12"]
+    assert "Node Operator added with share: `2`" in plan.per_node_operator["12"]
+
+
+@pytest.mark.asyncio
+async def test_curated_bond_curve_weight_set_targets_mapped_node_operators():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    module = _FakeCuratedModule(operators_count=3)
+    accounting = _FakeCuratedAccounting({0: 1, 1: 2, 2: 1})
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=module,
+            accounting=accounting,
+            parameters_registry=object(),
+            meta_registry=object(),
+        ),
+        notifiable_events={"BondCurveWeightSet"},
+    )
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="BondCurveWeightSet",
+        args={"curveId": 1, "weight": 50000},
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert module.operators_count_call.calls == [{"block_identifier": 123}]
+    assert accounting.curve_id_calls == [0, 1, 2]
+    assert plan.broadcast is None
+    assert set(plan.per_node_operator) == {"0", "2"}
+    assert "Operator type weight changed" in plan.per_node_operator["0"]
+    assert "Type id: `1`" in plan.per_node_operator["0"]
+    assert "New weight: `50000`" in plan.per_node_operator["0"]
+    assert "nodeOperatorId: 0" in plan.per_node_operator["0"]
+    assert "nodeOperatorId: 2" in plan.per_node_operator["2"]
+
+
 def test_subscription_decodes_v2_and_v3_transition_events():
     from web3 import AsyncWeb3
 
+    from sentinel.app.contracts import CommunityContractAddresses
     from sentinel.app.health import HealthState
     from sentinel.app.module_adapter import build_module_adapter_from_config
     from sentinel.module_types import ModuleType
@@ -476,17 +772,19 @@ def test_subscription_decodes_v2_and_v3_transition_events():
             raise AssertionError("not used")
 
     cfg = SimpleNamespace(
-        module_address="0x0000000000000000000000000000000000000001",
-        accounting_address="0x0000000000000000000000000000000000000002",
-        parameters_registry_address="0x0000000000000000000000000000000000000003",
-        vebo_address="0x0000000000000000000000000000000000000004",
-        fee_distributor_address="0x0000000000000000000000000000000000000005",
-        exit_penalties_address="0x0000000000000000000000000000000000000006",
-        lido_locator_address="0x0000000000000000000000000000000000000007",
-        staking_router_address="0x0000000000000000000000000000000000000008",
-        staking_module_id=1,
-        module_type=ModuleType.COMMUNITY,
-        csm_version=2,
+        contract_addresses=CommunityContractAddresses(
+            module="0x0000000000000000000000000000000000000001",
+            accounting="0x0000000000000000000000000000000000000002",
+            parameters_registry="0x0000000000000000000000000000000000000003",
+            vebo="0x0000000000000000000000000000000000000004",
+            fee_distributor="0x0000000000000000000000000000000000000005",
+            exit_penalties="0x0000000000000000000000000000000000000006",
+            lido_locator="0x0000000000000000000000000000000000000007",
+            staking_router="0x0000000000000000000000000000000000000008",
+            staking_module_id=1,
+            module_type=ModuleType.COMMUNITY,
+            csm_version=2,
+        ),
         module_ui_url=None,
         process_blocks_requests_per_second=None,
     )
@@ -626,7 +924,6 @@ async def test_get_notification_plan_allows_v2_historical_event_with_v3_adapter(
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.chain = _DummyConnectProvider()
-    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
     event_messages.cfg = SimpleNamespace(
         etherscan_block_url_template="https://etherscan.io/block/{}",
         etherscan_tx_url_template="https://etherscan.io/tx/{}",
@@ -659,7 +956,7 @@ async def test_validator_slashing_reported_handler_formats_pubkey_and_footer():
     from sentinel.models import Event
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
-    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
         beaconchain_url_template="https://beaconcha.in/validator/{}",
         etherscan_tx_url_template="https://etherscan.io/tx/{}",
@@ -689,7 +986,7 @@ async def test_validator_exit_delay_processed_accepts_v3_delay_fee_arg():
     from sentinel.models import Event
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
-    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
         beaconchain_url_template="https://beaconcha.in/validator/{}",
         etherscan_tx_url_template="https://etherscan.io/tx/{}",
@@ -717,7 +1014,7 @@ async def test_validator_exit_delay_processed_keeps_v2_delay_penalty_arg():
     from sentinel.models import Event
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
-    event_messages.w3 = SimpleNamespace(to_hex=lambda value: "0x" + value.hex())
+    event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
         beaconchain_url_template="https://beaconcha.in/validator/{}",
         etherscan_tx_url_template="https://etherscan.io/tx/{}",
@@ -803,9 +1100,20 @@ async def test_initialized_event_only_emits_for_v3_module():
         tx=HexBytes("0xdeadbeef"),
         address="0x0000000000000000000000000000000000000abc",
     )
+    ignored_non_module_event = Event(
+        event="Initialized",
+        args={"version": 3},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000def",
+    )
 
     assert (
         await CommunityEventMessages.get_notification_plan(event_messages, ignored_v2_event) is None
+    )
+    assert (
+        await CommunityEventMessages.get_notification_plan(event_messages, ignored_non_module_event)
+        is None
     )
 
     plan = await CommunityEventMessages.get_notification_plan(event_messages, emitted_v3_event)

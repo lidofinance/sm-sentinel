@@ -2,10 +2,14 @@ from dataclasses import fields, replace
 
 import pytest
 
-from sentinel.app.contracts import ContractAddresses
+from sentinel.app.contracts import (
+    CommunityContractAddresses,
+    ContractAddresses,
+    CuratedContractAddresses,
+    get_contract_abis,
+)
 from sentinel.app.module_adapter import build_module_adapter_from_addresses
 from sentinel.chain import ConnectOnDemand
-from sentinel.models import get_contract_abis
 from sentinel.module_types import ModuleType
 from sentinel.modules.base import BaseModuleAdapter
 from sentinel.modules.texts import BotTexts
@@ -64,19 +68,25 @@ class _FakeModuleContract:
 
 
 def _dummy_addresses(module_type: ModuleType) -> ContractAddresses:
-    return ContractAddresses(
-        module="0x0000000000000000000000000000000000000001",
-        accounting="0x0000000000000000000000000000000000000002",
-        parameters_registry="0x0000000000000000000000000000000000000003",
-        fee_distributor="0x0000000000000000000000000000000000000004",
-        exit_penalties="0x0000000000000000000000000000000000000005",
-        lido_locator="0x0000000000000000000000000000000000000006",
-        staking_router="0x0000000000000000000000000000000000000007",
-        vebo="0x0000000000000000000000000000000000000008",
-        staking_module_id=1,
-        module_type=module_type,
-        csm_version=3,
-    )
+    common_kwargs = {
+        "module": "0x0000000000000000000000000000000000000001",
+        "accounting": "0x0000000000000000000000000000000000000002",
+        "parameters_registry": "0x0000000000000000000000000000000000000003",
+        "fee_distributor": "0x0000000000000000000000000000000000000004",
+        "exit_penalties": "0x0000000000000000000000000000000000000005",
+        "lido_locator": "0x0000000000000000000000000000000000000006",
+        "staking_router": "0x0000000000000000000000000000000000000007",
+        "vebo": "0x0000000000000000000000000000000000000008",
+        "staking_module_id": 1,
+        "module_type": module_type,
+        "csm_version": 3,
+    }
+    if module_type == ModuleType.CURATED:
+        return CuratedContractAddresses(
+            **common_kwargs,
+            meta_registry="0x0000000000000000000000000000000000000009",
+        )
+    return CommunityContractAddresses(**common_kwargs)
 
 
 def _dummy_contracts() -> CommunityModuleContracts:
@@ -117,6 +127,7 @@ def test_curated_module_adapter_instantiation():
         parameters_registry=object(),
         fee_distributor=object(),
         exit_penalties=object(),
+        meta_registry=object(),
         lido_locator=object(),
         staking_router=object(),
         vebo=object(),
@@ -129,8 +140,9 @@ def test_curated_module_adapter_instantiation():
         chain=_dummy_chain(),
     )
     assert result.module_type == ModuleType.CURATED
-    assert result.catalog_events() == set()
-    assert result.notifiable_events() == set()
+    assert "DepositedSigningKeysCountChanged" in result.catalog_events()
+    assert "OperatorGroupCreated" in result.catalog_events()
+    assert result.catalog_events() == result.notifiable_events()
 
 
 def test_build_curated_module_adapter_uses_curated_module_abi():
@@ -170,7 +182,7 @@ def test_adapter_build_event_list_text_filters_catalog_events():
 
 
 def test_community_module_adapter_catalog_events_change_with_csm_version():
-    addresses_v2 = ContractAddresses(
+    addresses_v2 = CommunityContractAddresses(
         module="0x0000000000000000000000000000000000000001",
         accounting="0x0000000000000000000000000000000000000002",
         parameters_registry="0x0000000000000000000000000000000000000003",
@@ -249,26 +261,33 @@ async def test_community_module_adapter_validates_operator_ids():
 
 
 @pytest.mark.asyncio
-async def test_base_module_adapter_rejects_operator_ids_by_default():
+async def test_curated_module_adapter_validates_operator_ids():
     addresses = _dummy_addresses(ModuleType.CURATED)
+    chain = _FakeChain()
     adapter = CuratedModuleAdapter(
         addresses=addresses,
         contracts=CuratedModuleContracts(
-            module=object(),
+            module=_FakeModuleContract(node_operator_count=3),
             accounting=object(),
             parameters_registry=object(),
             fee_distributor=object(),
             exit_penalties=object(),
+            meta_registry=object(),
             lido_locator=object(),
             staking_router=object(),
             vebo=object(),
         ),
         contract_abis=CuratedModuleAdapter.contract_abis_for(addresses),
         module_ui_url=None,
-        chain=_dummy_chain(),
+        chain=chain,
     )
 
-    assert not await adapter.is_valid_operator_id(0)
+    assert await adapter.is_valid_operator_id(0)
+    assert await adapter.is_valid_operator_id(2)
+    assert not await adapter.is_valid_operator_id(3)
+    assert not await adapter.is_valid_operator_id(-1)
+    assert chain.enter_count == 4
+    assert chain.exit_count == 4
 
 
 def test_bot_text_instances_define_common_texts():

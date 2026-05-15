@@ -1,38 +1,19 @@
-from dataclasses import dataclass
 from enum import StrEnum
 
 from aiogram.utils.formatting import Text, Bold, TextLink, Code
 from web3.constants import ADDRESS_ZERO
 from sentinel.config import get_config
+from sentinel.modules.catalog import EventDefinition, build_grouped_event_list_text
+from sentinel.modules.formatting import markdown, nl
+from sentinel.modules.registry import RegisterEventMessage
 from sentinel.modules.texts import BotTexts
-
-
-def markdown(*args, **kwargs) -> str:
-    return Text(*args, **kwargs).as_markdown()
-
-
-def nl(x: int = 2) -> str:
-    return "\n" * x
-
-
-class RegisterEventMessage:
-    def __init__(self, event_name):
-        self.event_name = event_name
-
-    def __call__(self, func):
-        COMMUNITY_EVENT_MESSAGES[self.event_name] = func
-        return func
 
 
 COMMUNITY_EVENT_MESSAGES = {}
 
 
-@dataclass(frozen=True, slots=True)
-class EventDefinition:
-    name: str
-    description: str
-
-    group_title: "EventGroup"
+def register_event_message(event_name: str):
+    return RegisterEventMessage(COMMUNITY_EVENT_MESSAGES, event_name)
 
 
 class EventGroup(StrEnum):
@@ -218,35 +199,13 @@ COMMUNITY_EVENT_CATALOG: list[EventDefinition] = [
 COMMUNITY_EVENT_DESCRIPTIONS = {event.name: event.description for event in COMMUNITY_EVENT_CATALOG}
 
 
-def _group_event_catalog() -> list[tuple[EventGroup, list[EventDefinition]]]:
-    grouped: dict[EventGroup, list[EventDefinition]] = {}
-    for event in COMMUNITY_EVENT_CATALOG:
-        grouped.setdefault(event.group_title, []).append(event)
-    return list(grouped.items())
-
-
 def build_event_list_text(catalog_events: set[str], module_ui_url: str | None = None) -> str:
     _ = module_ui_url
-    parts: list = [
-        "Here is the list of events you will receive notifications for:",
-        nl(1),
-        "A 🚨 means urgent action is required from you",
-        nl(),
-    ]
-
-    for group_title, events in _group_event_catalog():
-        active_events = [event for event in events if event.name in catalog_events]
-        if not active_events:
-            continue
-        parts.extend([Bold(group_title.value), nl(1)])
-        description = GROUP_DESCRIPTIONS.get(group_title, "")
-        if description:
-            parts.extend([description, nl(1)])
-        for event in active_events:
-            parts.extend([event.description, nl(1)])
-        parts.append(nl())
-
-    return markdown(*parts)
+    return build_grouped_event_list_text(
+        catalog_events=catalog_events,
+        catalog=COMMUNITY_EVENT_CATALOG,
+        group_descriptions=GROUP_DESCRIPTIONS,
+    )
 
 
 WELCOME_TEXT = (
@@ -338,12 +297,12 @@ def EVENT_MESSAGE_FOOTER_TX_ONLY(link) -> Text:
     return Text(nl(), TextLink("Transaction", url=link))
 
 
-@RegisterEventMessage("DepositedSigningKeysCountChanged")
+@register_event_message("DepositedSigningKeysCountChanged")
 def deposited_signing_keys_count_changed(x):
     return markdown("🤩 ", Bold("Keys were deposited!"), nl(), f"New deposited keys count: {x}")
 
 
-@RegisterEventMessage("ELRewardsStealingPenaltyCancelled")
+@register_event_message("ELRewardsStealingPenaltyCancelled")
 def el_rewards_stealing_penalty_cancelled(remaining):
     return markdown(
         "😮‍💨 ",
@@ -354,7 +313,7 @@ def el_rewards_stealing_penalty_cancelled(remaining):
     )
 
 
-@RegisterEventMessage("ELRewardsStealingPenaltyReported")
+@register_event_message("ELRewardsStealingPenaltyReported")
 def el_rewards_stealing_penalty_reported(rewards, block_link):
     return markdown(
         "🚨 ",
@@ -371,7 +330,7 @@ def el_rewards_stealing_penalty_reported(rewards, block_link):
     )
 
 
-@RegisterEventMessage("ELRewardsStealingPenaltySettled")
+@register_event_message("ELRewardsStealingPenaltySettled")
 def el_rewards_stealing_penalty_settled(burnt):
     return markdown(
         "🚨 ",
@@ -382,7 +341,7 @@ def el_rewards_stealing_penalty_settled(burnt):
     )
 
 
-@RegisterEventMessage("GeneralDelayedPenaltyCancelled")
+@register_event_message("GeneralDelayedPenaltyCancelled")
 def general_delayed_penalty_cancelled(remaining):
     return markdown(
         "😮‍💨 ",
@@ -393,7 +352,7 @@ def general_delayed_penalty_cancelled(remaining):
     )
 
 
-@RegisterEventMessage("GeneralDelayedPenaltyCompensated")
+@register_event_message("GeneralDelayedPenaltyCompensated")
 def general_delayed_penalty_compensated(amount):
     return markdown(
         "✅ ",
@@ -404,7 +363,7 @@ def general_delayed_penalty_compensated(amount):
     )
 
 
-@RegisterEventMessage("GeneralDelayedPenaltyReported")
+@register_event_message("GeneralDelayedPenaltyReported")
 def general_delayed_penalty_reported(amount, additional_fine, details):
     return markdown(
         "🚨 ",
@@ -421,7 +380,7 @@ def general_delayed_penalty_reported(amount, additional_fine, details):
     )
 
 
-@RegisterEventMessage("GeneralDelayedPenaltySettled")
+@register_event_message("GeneralDelayedPenaltySettled")
 def general_delayed_penalty_settled(amount):
     return markdown(
         "🚨 ",
@@ -432,7 +391,7 @@ def general_delayed_penalty_settled(amount):
     )
 
 
-@RegisterEventMessage("ValidatorSlashingReported")
+@register_event_message("ValidatorSlashingReported")
 def validator_slashing_reported(key, key_url, key_index):
     return markdown(
         "🚨 ",
@@ -448,7 +407,7 @@ def validator_slashing_reported(key, key_url, key_index):
     )
 
 
-@RegisterEventMessage("BondDebtIncreased")
+@register_event_message("BondDebtIncreased")
 def bond_debt_increased(amount):
     return markdown(
         "🚨 ",
@@ -461,13 +420,13 @@ def bond_debt_increased(amount):
     )
 
 
-@RegisterEventMessage("BondDebtCovered")
+@register_event_message("BondDebtCovered")
 def bond_debt_covered(amount):
     return markdown("✅ ", Bold("Bond debt covered"), nl(), "Covered amount: ", Code(amount))
 
 
-@RegisterEventMessage("CustomRewardsClaimerSet")
-def custom_rewards_claimer_set(rewards_claimer):
+@register_event_message("CustomRewardsClaimerSet")
+def custom_rewards_claimer_set(rewards_claimer, previous_rewards_claimer=None):
     if rewards_claimer == ADDRESS_ZERO:
         return markdown(
             "ℹ️ ",
@@ -475,9 +434,14 @@ def custom_rewards_claimer_set(rewards_claimer):
             nl(),
             "Custom rewards claimer was removed for this Node Operator.",
         )
+    title = (
+        "Custom rewards claimer set"
+        if previous_rewards_claimer == ADDRESS_ZERO
+        else "Custom rewards claimer changed"
+    )
     return markdown(
         "ℹ️ ",
-        Bold("Custom rewards claimer changed"),
+        Bold(title),
         nl(),
         "Rewards claimer: ",
         Code(rewards_claimer),
@@ -501,7 +465,7 @@ def _format_fee_splits(fee_splits) -> str:
     )
 
 
-@RegisterEventMessage("FeeSplitsSet")
+@register_event_message("FeeSplitsSet")
 def fee_splits_set(fee_splits):
     cfg = get_config()
     return markdown(
@@ -516,7 +480,7 @@ def fee_splits_set(fee_splits):
     )
 
 
-@RegisterEventMessage("ExpiredBondLockRemoved")
+@register_event_message("ExpiredBondLockRemoved")
 def expired_bond_lock_removed():
     return markdown(
         "✅ ",
@@ -526,7 +490,7 @@ def expired_bond_lock_removed():
     )
 
 
-@RegisterEventMessage("KeyAllocatedBalanceChanged")
+@register_event_message("KeyAllocatedBalanceChanged")
 def key_allocated_balance_changed(key_index, new_total):
     return markdown(
         "👀 ",
@@ -540,14 +504,14 @@ def key_allocated_balance_changed(key_index, new_total):
     )
 
 
-@RegisterEventMessage("KeyRemovalChargeApplied")
+@register_event_message("KeyRemovalChargeApplied")
 def key_removal_charge_applied(amount):
     return markdown(
         "🔑 ", Bold("Key removal charge applied"), nl(), "Amount of charge: ", Code(amount)
     )
 
 
-@RegisterEventMessage("BondCurveSet")
+@register_event_message("BondCurveSet")
 def bond_curve_set(curve_id: int):
     cfg = get_config()
     return markdown(
@@ -563,7 +527,7 @@ def bond_curve_set(curve_id: int):
     )
 
 
-@RegisterEventMessage("NodeOperatorManagerAddressChangeProposed")
+@register_event_message("NodeOperatorManagerAddressChangeProposed")
 def node_operator_manager_address_change_proposed(address):
     if address == ADDRESS_ZERO:
         return markdown("ℹ️ ", Bold("Proposed manager address revoked"))
@@ -579,12 +543,12 @@ def node_operator_manager_address_change_proposed(address):
         )
 
 
-@RegisterEventMessage("NodeOperatorManagerAddressChanged")
+@register_event_message("NodeOperatorManagerAddressChanged")
 def node_operator_manager_address_changed(address):
     return markdown("✅ ", Bold("Manager address changed"), nl(), "New address: ", Code(address))
 
 
-@RegisterEventMessage("NodeOperatorRewardAddressChangeProposed")
+@register_event_message("NodeOperatorRewardAddressChangeProposed")
 def node_operator_reward_address_change_proposed(address):
     if address == ADDRESS_ZERO:
         return markdown("ℹ️ ", Bold("Proposed reward address revoked"))
@@ -600,12 +564,12 @@ def node_operator_reward_address_change_proposed(address):
         )
 
 
-@RegisterEventMessage("NodeOperatorRewardAddressChanged")
+@register_event_message("NodeOperatorRewardAddressChanged")
 def node_operator_reward_address_changed(address):
     return markdown("✅ ", Bold("Rewards address changed"), nl(), "New address: ", Code(address))
 
 
-@RegisterEventMessage("VettedSigningKeysCountDecreased")
+@register_event_message("VettedSigningKeysCountDecreased")
 def vetted_signing_keys_count_decreased():
     cfg = get_config()
     return markdown(
@@ -618,7 +582,7 @@ def vetted_signing_keys_count_decreased():
     )
 
 
-@RegisterEventMessage("WithdrawalSubmitted")
+@register_event_message("WithdrawalSubmitted")
 def withdrawal_submitted(key, key_url, amount):
     cfg = get_config()
     return markdown(
@@ -635,7 +599,7 @@ def withdrawal_submitted(key, key_url, amount):
     )
 
 
-@RegisterEventMessage("ValidatorWithdrawn")
+@register_event_message("ValidatorWithdrawn")
 def validator_withdrawn(key, key_url, balance, slashing_penalty):
     parts: list = [
         "👀 ",
@@ -652,7 +616,7 @@ def validator_withdrawn(key, key_url, balance, slashing_penalty):
     return markdown(*parts)
 
 
-@RegisterEventMessage("TotalSigningKeysCountChanged")
+@register_event_message("TotalSigningKeysCountChanged")
 def total_signing_keys_count_changed(count, count_before):
     if count > count_before:
         return markdown(
@@ -666,7 +630,7 @@ def total_signing_keys_count_changed(count, count_before):
         return markdown("🚨 ", Bold("Key removed"), nl(), "Total keys: ", Code(count))
 
 
-@RegisterEventMessage("ValidatorExitRequest")
+@register_event_message("ValidatorExitRequest")
 def validator_exit_request(key, key_url, request_date, exit_until):
     return markdown(
         "🚨 ",
@@ -690,7 +654,7 @@ def validator_exit_request(key, key_url, request_date, exit_until):
     )
 
 
-@RegisterEventMessage("ValidatorExitDelayProcessed")
+@register_event_message("ValidatorExitDelayProcessed")
 def validator_exit_delay_processed(key, key_url, penalty):
     return markdown(
         "🚨 ",
@@ -706,11 +670,11 @@ def validator_exit_delay_processed(key, key_url, penalty):
     )
 
 
-@RegisterEventMessage("TriggeredExitFeeRecorded")
+@register_event_message("TriggeredExitFeeRecorded")
 def triggered_exit_fee_recorded(key, key_url, paid_fee, recorded_fee):
     return markdown(
         "🚨 ",
-        Bold("Exit fee recorded"),
+        Bold("Triggerable Withdrawal fee recorded"),
         nl(),
         "Validator: ",
         TextLink(key, url=key_url),
@@ -721,11 +685,11 @@ def triggered_exit_fee_recorded(key, key_url, paid_fee, recorded_fee):
         "Fee to be charged on exit: ",
         Code(recorded_fee),
         nl(),
-        "Exit fee will be applied when the validator exits",
+        "Exit fee will be applied when the validator exits.",
     )
 
 
-@RegisterEventMessage("StrikesPenaltyProcessed")
+@register_event_message("StrikesPenaltyProcessed")
 def strikes_penalty_processed(key, key_url, penalty):
     return markdown(
         "🚨 ",
@@ -737,11 +701,11 @@ def strikes_penalty_processed(key, key_url, penalty):
         "Penalty amount: ",
         Code(penalty),
         nl(),
-        "Penalty will be charged when the validator withdraws",
+        "Penalty will be charged when the validator withdraws.",
     )
 
 
-@RegisterEventMessage("DistributionLogUpdated")
+@register_event_message("DistributionLogUpdated")
 def distribution_data_updated(
     node_operator_id: int | None = None, striked_validators: list | None = None
 ):
@@ -775,7 +739,7 @@ def distribution_data_updated(
     return base_message.as_markdown()
 
 
-@RegisterEventMessage("TargetValidatorsCountChanged")
+@register_event_message("TargetValidatorsCountChanged")
 def target_validators_count_changed(mode_before, limit_before, mode_after, limit_after):
     match (mode_before, limit_before, mode_after, limit_after):
         case (_, _, 1, 0):
@@ -851,7 +815,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
             )
 
 
-@RegisterEventMessage("Initialized")
+@register_event_message("Initialized")
 def initialized():
     cfg = get_config()
     return markdown(

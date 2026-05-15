@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import pytest
 
-from sentinel.app.contracts import ContractAddresses
+from sentinel.app.contracts import CommunityContractAddresses
 from sentinel.module_types import ModuleType
 
 # Load local environment variables before tests run.
@@ -24,7 +24,7 @@ def pytest_configure(config):
 @pytest.fixture
 def fake_contract_addresses():
     def _make(module_address: str = "0x0000000000000000000000000000000000000001"):
-        return ContractAddresses(
+        return CommunityContractAddresses(
             module=module_address,
             accounting="0x0000000000000000000000000000000000000002",
             parameters_registry="0x0000000000000000000000000000000000000003",

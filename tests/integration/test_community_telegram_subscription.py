@@ -1,5 +1,7 @@
 import asyncio
 from collections.abc import Callable
+from contextlib import suppress
+import os
 import pytest
 
 from sentinel.config import get_config, clear_config
@@ -7,10 +9,20 @@ from sentinel.config import get_config, clear_config
 from .helpers import replay_transaction_on_anvil, build_subscription
 
 
+COMMUNITY_HOODI_MODULE = "0x79CEf36D84743222f37765204Bec41E92a93E59d"
+
+
 @pytest.fixture(autouse=True, scope="session")
-def force_service_urls():
-    """Force URL-based config to stable values for integration tests."""
+def community_hoodi_config_env():
+    """Point this suite at the Hoodi Community deployment used by the fixture blocks."""
+
+    provider_url = os.getenv("WEB3_SOCKET_PROVIDER")
+    if not provider_url:
+        pytest.skip("WEB3_SOCKET_PROVIDER is required")
+
     with pytest.MonkeyPatch.context() as m:
+        m.setenv("WEB3_SOCKET_PROVIDER", provider_url)
+        m.setenv("MODULE_ADDRESS", COMMUNITY_HOODI_MODULE)
         m.setenv("ETHERSCAN_URL", "https://etherscan.io")
         m.setenv("BEACONCHAIN_URL", "https://beaconcha.in")
         m.setenv("CSM_UI_URL", "https://csm.lido.fi")
@@ -20,11 +32,6 @@ def force_service_urls():
 
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
-
-PLACEHOLDER_BLOCK = -1
-PLACEHOLDER_TX_HASH = "0xTX_HASH_HERE"
-PLACEHOLDER_LOG_INDEX = -1
-PLACEHOLDER_MESSAGE = "EXPECTED_MESSAGE_HERE"
 
 
 async def _exercise_event(
@@ -46,7 +53,7 @@ async def _exercise_event(
             cfg = get_config()
             subscription_task = asyncio.create_task(harness.subscribe())
             try:
-                await asyncio.sleep(0.1)  # give the subscription task time to register handlers
+                await harness.wait_until_subscribed()
                 await replay_transaction_on_anvil(
                     fork_provider_url=cfg.web3_socket_provider,
                     anvil_http_url=anvil.http_url,
@@ -77,6 +84,8 @@ async def _exercise_event(
         await harness.disconnect()
         if subscription_task:
             subscription_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await subscription_task
 
 
 async def _wait_for(
@@ -327,12 +336,12 @@ async def test_process_blocks_triggered_exit_fee_recorded(anvil_launcher, via_su
         fork_block=1292072,
         tx_hash="0xaf7969ea79766f13956215cd2abca8395d006d1d54493773adf28975cb6f6b1d",
         expected_markdown=(
-            "🚨 *Exit fee recorded*\n\n"
+            "🚨 *Triggerable Withdrawal fee recorded*\n\n"
             "Validator: [0xaaaf86690452a63abe9ef3398055c7105fd78ea980eddfd5513612e1ef7342b49190fef0de38188bc850a7c474bce8e0]"
             "(https://beaconcha.in/validator/0xaaaf86690452a63abe9ef3398055c7105fd78ea980eddfd5513612e1ef7342b49190fef0de38188bc850a7c474bce8e0)\n"
             "Fee paid now: `1 wei`\n"
             "Fee to be charged on exit: `1 wei`\n\n"
-            "Exit fee will be applied when the validator exits\n\n"
+            "Exit fee will be applied when the validator exits\\.\n\n"
             "nodeOperatorId: 120\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
@@ -351,7 +360,7 @@ async def test_process_blocks_strikes_penalty_processed(anvil_launcher, via_subs
             "Validator: [0xaaaf86690452a63abe9ef3398055c7105fd78ea980eddfd5513612e1ef7342b49190fef0de38188bc850a7c474bce8e0]"
             "(https://beaconcha.in/validator/0xaaaf86690452a63abe9ef3398055c7105fd78ea980eddfd5513612e1ef7342b49190fef0de38188bc850a7c474bce8e0)\n"
             "Penalty amount: `0\\.258 ether`\n\n"
-            "Penalty will be charged when the validator withdraws\n\n"
+            "Penalty will be charged when the validator withdraws\\.\n\n"
             "nodeOperatorId: 120\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),

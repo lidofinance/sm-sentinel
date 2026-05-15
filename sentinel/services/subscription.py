@@ -60,11 +60,15 @@ class TelegramSubscription(Subscription):
             self.reconfigure_module_adapter(runtime.module_adapter)
             return
 
-        cfg = replace(runtime.config, csm_version=csm_version)
+        contract_addresses = replace(
+            runtime.config.contract_addresses,
+            csm_version=csm_version,
+        )
+        cfg = replace(runtime.config, contract_addresses=contract_addresses)
         set_config(cfg)
         module_adapter = build_module_adapter_from_config(
             cfg,
-            self.event_messages.w3,
+            runtime.chain.w3,
             runtime.chain,
         )
 

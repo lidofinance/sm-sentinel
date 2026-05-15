@@ -1,21 +1,122 @@
 import logging
 import json
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 
 from eth_typing import ChecksumAddress
 import web3.exceptions
 from web3 import WebSocketProvider, AsyncWeb3, AsyncHTTPProvider
 
-from sentinel.models import CONTRACT_ABIS_V2
 from sentinel.module_types import ModuleType, decode_module_type
 
 logger = logging.getLogger(__name__)
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+ABI_DIR = Path("abi")
+ABI_V3_DIR = ABI_DIR / "v3"
+
+
+def _load_abi(name: str, *, version: int | None = None) -> list[dict]:
+    base_dir = ABI_V3_DIR if version == 3 else ABI_DIR
+    with (base_dir / name).open() as fh:
+        return json.load(fh)
+
+
+MODULE_ABI_V2 = _load_abi("CSModuleV2.json")
+MODULE_ABI_V3 = _load_abi("CSModule.json", version=3)
+CURATED_MODULE_ABI = _load_abi("CuratedModule.json", version=3)
+META_REGISTRY_ABI = _load_abi("MetaRegistry.json", version=3)
+
+ACCOUNTING_ABI_V2 = _load_abi("CSAccountingV2.json")
+ACCOUNTING_ABI_V3 = _load_abi("CSAccounting.json", version=3)
+
+FEE_DISTRIBUTOR_ABI_V2 = _load_abi("CSFeeDistributorV2.json")
+FEE_DISTRIBUTOR_ABI_V3 = _load_abi("CSFeeDistributor.json", version=3)
+
+EXIT_PENALTIES_ABI_V2 = _load_abi("CSExitPenalties.json")
+EXIT_PENALTIES_ABI_V3 = _load_abi("CSExitPenalties.json", version=3)
+
+PARAMETERS_REGISTRY_ABI_V2 = _load_abi("CSParametersRegistry.json")
+PARAMETERS_REGISTRY_ABI_V3 = _load_abi("CSParametersRegistry.json", version=3)
+
+VEBO_ABI = _load_abi("VEBO.json")
+
+LIDO_LOCATOR_ABI_V2 = _load_abi("LidoLocator.json")
+LIDO_LOCATOR_ABI_V3 = _load_abi("LidoLocator.json", version=3)
+
+STAKING_ROUTER_ABI_V2 = _load_abi("StakingRouter.json")
+STAKING_ROUTER_ABI_V3 = _load_abi("StakingRouter.json", version=3)
 
 
 @dataclass(frozen=True, slots=True)
-class ContractAddresses:
+class BaseContractABIs:
+    module: list[dict]
+    accounting: list[dict]
+    parameters_registry: list[dict]
+    fee_distributor: list[dict]
+    exit_penalties: list[dict]
+    lido_locator: list[dict]
+    staking_router: list[dict]
+    vebo: list[dict]
+
+
+@dataclass(frozen=True, slots=True)
+class CommunityContractABIs(BaseContractABIs):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class CuratedContractABIs(BaseContractABIs):
+    meta_registry: list[dict]
+
+
+ContractABIs = CommunityContractABIs | CuratedContractABIs
+
+
+CONTRACT_ABIS_V2 = CommunityContractABIs(
+    module=MODULE_ABI_V2,
+    accounting=ACCOUNTING_ABI_V2,
+    parameters_registry=PARAMETERS_REGISTRY_ABI_V2,
+    fee_distributor=FEE_DISTRIBUTOR_ABI_V2,
+    exit_penalties=EXIT_PENALTIES_ABI_V2,
+    lido_locator=LIDO_LOCATOR_ABI_V2,
+    staking_router=STAKING_ROUTER_ABI_V2,
+    vebo=VEBO_ABI,
+)
+
+CONTRACT_ABIS_V3 = CommunityContractABIs(
+    module=MODULE_ABI_V3,
+    accounting=ACCOUNTING_ABI_V3,
+    parameters_registry=PARAMETERS_REGISTRY_ABI_V3,
+    fee_distributor=FEE_DISTRIBUTOR_ABI_V3,
+    exit_penalties=EXIT_PENALTIES_ABI_V3,
+    lido_locator=LIDO_LOCATOR_ABI_V3,
+    staking_router=STAKING_ROUTER_ABI_V3,
+    vebo=VEBO_ABI,
+)
+
+CURATED_CONTRACT_ABIS = CuratedContractABIs(
+    module=CURATED_MODULE_ABI,
+    accounting=ACCOUNTING_ABI_V3,
+    parameters_registry=PARAMETERS_REGISTRY_ABI_V3,
+    fee_distributor=FEE_DISTRIBUTOR_ABI_V3,
+    exit_penalties=EXIT_PENALTIES_ABI_V3,
+    meta_registry=META_REGISTRY_ABI,
+    lido_locator=LIDO_LOCATOR_ABI_V3,
+    staking_router=STAKING_ROUTER_ABI_V3,
+    vebo=VEBO_ABI,
+)
+
+
+def get_contract_abis(csm_version: int) -> CommunityContractABIs:
+    if csm_version == 3:
+        return CONTRACT_ABIS_V3
+    return CONTRACT_ABIS_V2
+
+
+@dataclass(frozen=True, slots=True)
+class BaseContractAddresses:
     module: ChecksumAddress
     accounting: ChecksumAddress
     parameters_registry: ChecksumAddress
@@ -44,10 +145,26 @@ class ContractAddresses:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CommunityContractAddresses(BaseContractAddresses):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class CuratedContractAddresses(BaseContractAddresses):
+    meta_registry: ChecksumAddress
+
+    def as_dict(self) -> dict[str, str | int]:
+        return BaseContractAddresses.as_dict(self) | {"meta_registry": self.meta_registry}
+
+
+ContractAddresses = CommunityContractAddresses | CuratedContractAddresses
+
+
 async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> ContractAddresses:
     """Asynchronously discover dependent contract addresses using the provided provider."""
 
-    if not await w3.is_connected():
+    if isinstance(w3.provider, WebSocketProvider) and not await w3.is_connected():
         await w3.provider.connect()
 
     checksum = w3.to_checksum_address
@@ -82,19 +199,47 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
 
     module_id = _find_staking_module_id(modules, checksum(module_address))
 
-    addresses = ContractAddresses(
-        module=checksum(_ensure_address(module_address, "MODULE_ADDRESS")),
-        accounting=checksum(_ensure_address(accounting, "ACCOUNTING()")),
-        parameters_registry=checksum(_ensure_address(parameters_registry, "PARAMETERS_REGISTRY()")),
-        fee_distributor=checksum(_ensure_address(fee_distributor, "FEE_DISTRIBUTOR()")),
-        exit_penalties=checksum(_ensure_address(exit_penalties, "EXIT_PENALTIES()")),
-        lido_locator=checksum(_ensure_address(lido_locator, "LIDO_LOCATOR()")),
-        staking_router=checksum(_ensure_address(staking_router, "stakingRouter()")),
-        vebo=checksum(_ensure_address(vebo, "validatorsExitBusOracle()")),
-        staking_module_id=module_id,
-        module_type=module_type,
-        csm_version=csm_version,
+    module_checksum = checksum(_ensure_address(module_address, "MODULE_ADDRESS"))
+    accounting_checksum = checksum(_ensure_address(accounting, "ACCOUNTING()"))
+    parameters_registry_checksum = checksum(
+        _ensure_address(parameters_registry, "PARAMETERS_REGISTRY()")
     )
+    fee_distributor_checksum = checksum(_ensure_address(fee_distributor, "FEE_DISTRIBUTOR()"))
+    exit_penalties_checksum = checksum(_ensure_address(exit_penalties, "EXIT_PENALTIES()"))
+    lido_locator_checksum = checksum(_ensure_address(lido_locator, "LIDO_LOCATOR()"))
+    staking_router_checksum = checksum(_ensure_address(staking_router, "stakingRouter()"))
+    vebo_checksum = checksum(_ensure_address(vebo, "validatorsExitBusOracle()"))
+
+    if module_type == ModuleType.CURATED:
+        meta_registry = await _discover_meta_registry(w3, module_address)
+        addresses = CuratedContractAddresses(
+            module=module_checksum,
+            accounting=accounting_checksum,
+            parameters_registry=parameters_registry_checksum,
+            fee_distributor=fee_distributor_checksum,
+            exit_penalties=exit_penalties_checksum,
+            lido_locator=lido_locator_checksum,
+            staking_router=staking_router_checksum,
+            vebo=vebo_checksum,
+            staking_module_id=module_id,
+            module_type=module_type,
+            csm_version=csm_version,
+            meta_registry=checksum(_ensure_address(meta_registry, "META_REGISTRY()")),
+        )
+    else:
+        addresses = CommunityContractAddresses(
+            module=module_checksum,
+            accounting=accounting_checksum,
+            parameters_registry=parameters_registry_checksum,
+            fee_distributor=fee_distributor_checksum,
+            exit_penalties=exit_penalties_checksum,
+            lido_locator=lido_locator_checksum,
+            staking_router=staking_router_checksum,
+            vebo=vebo_checksum,
+            staking_module_id=module_id,
+            module_type=module_type,
+            csm_version=csm_version,
+        )
 
     _log_discovered_addresses(addresses)
     return addresses
@@ -104,7 +249,12 @@ async def discover_contract_addresses_from_url(
     provider_url: str, module_address: str
 ) -> ContractAddresses:
     w3 = await _build_web3(provider_url)
-    return await discover_contract_addresses(w3, module_address)
+    try:
+        return await discover_contract_addresses(w3, module_address)
+    finally:
+        if hasattr(w3.provider, "disconnect"):
+            with suppress(Exception):
+                await w3.provider.disconnect()
 
 
 def _ensure_address(raw_address: str, source: str) -> str:
@@ -119,6 +269,15 @@ async def _discover_csm_version(module_contract) -> int:
         return 3 if version >= 3 else 2
     except (web3.exceptions.Web3Exception, ValueError):
         return 2
+
+
+async def _discover_meta_registry(w3: AsyncWeb3, module_address: str) -> str:
+    curated_module = w3.eth.contract(
+        address=w3.to_checksum_address(module_address),
+        abi=CURATED_CONTRACT_ABIS.module,
+        decode_tuples=True,
+    )
+    return await curated_module.functions.META_REGISTRY().call()
 
 
 def _find_staking_module_id(modules: list[tuple], module_address: str) -> int:
