@@ -36,7 +36,7 @@ GROUP_DESCRIPTIONS: dict[EventGroup, str] = {
 COMMUNITY_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition(
         name="VettedSigningKeysCountDecreased",
-        description="- 🚨 Uploaded invalid keys",
+        description="- 🚨 Invalid or duplicated keys has been uploaded",
         group_title=EventGroup.KEY_MANAGEMENT,
     ),
     EventDefinition(
@@ -56,7 +56,7 @@ COMMUNITY_EVENT_CATALOG: list[EventDefinition] = [
     ),
     EventDefinition(
         name="KeyAllocatedBalanceChanged",
-        description="- 👀 Key allocated bond balance changed",
+        description="- 👀 Key balance increased",
         group_title=EventGroup.KEY_MANAGEMENT,
     ),
     EventDefinition(
@@ -96,7 +96,7 @@ COMMUNITY_EVENT_CATALOG: list[EventDefinition] = [
     ),
     EventDefinition(
         name="FeeSplitsSet",
-        description="- ℹ️ Reward fee splits changed",
+        description="- ℹ️ Fee splits changed",
         group_title=EventGroup.ADDRESS_AND_REWARD_CHANGES,
     ),
     EventDefinition(
@@ -463,24 +463,60 @@ def _fee_split_value(fee_split, field: str, index: int):
 def _format_fee_splits(fee_splits) -> str:
     if not fee_splits:
         return "none"
-    return "; ".join(
-        f"{_fee_split_value(fee_split, 'recipient', 0)}: {_fee_split_value(fee_split, 'share', 1)}"
+    return "\n".join(
+        f"- {_fee_split_value(fee_split, 'recipient', 0)}: "
+        f"{_format_basis_points_percent(_fee_split_value(fee_split, 'share', 1))}"
         for fee_split in fee_splits
     )
 
 
+def _format_basis_points_percent(value) -> str:
+    basis_points = int(value)
+    whole = basis_points // 100
+    fraction = basis_points % 100
+    if fraction == 0:
+        return f"{whole}%"
+    return f"{whole}.{fraction:02d}".rstrip("0") + "%"
+
+
+def _fee_splits_title(fee_splits, previous_fee_splits) -> str:
+    if fee_splits and not previous_fee_splits:
+        return "Fee splits set"
+    if not fee_splits and previous_fee_splits:
+        return "Fee splits removed"
+    return "Fee splits changed"
+
+
 @register_event_message("FeeSplitsSet")
-def fee_splits_set(fee_splits):
+def fee_splits_set(fee_splits, previous_fee_splits=None):
     cfg = get_config()
-    return markdown(
+    previous_fee_splits = previous_fee_splits or []
+    parts: list = [
         "ℹ️ ",
-        Bold("Fee splits changed"),
+        Bold(_fee_splits_title(fee_splits, previous_fee_splits)),
         nl(),
-        "Fee splits: ",
-        Code(_format_fee_splits(fee_splits)),
-        nl(1),
-        "Review the current rewards setup in the ",
-        TextLink("CSM UI", url=cfg.module_ui_url or ""),
+    ]
+    if previous_fee_splits:
+        parts.extend(
+            [
+                "Previous fee splits:",
+                nl(1),
+                _format_fee_splits(previous_fee_splits),
+                nl(),
+            ]
+        )
+    if fee_splits:
+        parts.extend(["Fee splits:", nl(1), _format_fee_splits(fee_splits), nl()])
+    if not fee_splits and not previous_fee_splits:
+        parts.extend(["Fee splits: ", Code("none"), nl(1)])
+    parts.extend(
+        [
+            "Review the current rewards setup in the ",
+            TextLink("CSM UI", url=cfg.module_ui_url or ""),
+        ]
+    )
+    return markdown(
+        *parts,
     )
 
 
@@ -578,7 +614,7 @@ def vetted_signing_keys_count_decreased():
     cfg = get_config()
     return markdown(
         "🚨 ",
-        Bold("Vetted keys count decreased"),
+        Bold("Invalid or duplicated keys has been uploaded"),
         nl(),
         "Consider removing invalid keys. Check ",
         TextLink("CSM UI", url=cfg.module_ui_url or ""),

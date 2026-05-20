@@ -248,7 +248,7 @@ async def test_process_blocks_vetted_signing_keys_count_decreased(anvil_launcher
         event_name="VettedSigningKeysCountDecreased",
         fork_block=1270156,
         tx_hash="0xbcbb7713a51ec2d3d93a4a693908f01afca482501474d80239602b3dcc42a231",
-        expected_markdown="🚨 *Vetted keys count decreased*\n\nConsider removing invalid keys\\. Check [CSM UI](https://csm.lido.fi) for more details\n\nnodeOperatorId: 296\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
+        expected_markdown="🚨 *Invalid or duplicated keys has been uploaded*\n\nConsider removing invalid keys\\. Check [CSM UI](https://csm.lido.fi) for more details\n\nnodeOperatorId: 296\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )

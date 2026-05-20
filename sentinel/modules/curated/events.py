@@ -69,6 +69,12 @@ def _sub_node_operator_shares(group_info) -> dict[int, int]:
     }
 
 
+def _weight_share_basis_points(share: int, weight: int, total_weighted_share: int) -> int:
+    if total_weighted_share <= 0:
+        return 0
+    return share * weight * 10_000 // total_weighted_share
+
+
 @dataclass(frozen=True, slots=True)
 class NodeOperatorMetadata:
     name: str | None
@@ -139,17 +145,50 @@ class CuratedEventMessages(BaseModule):
             return f"#{node_operator_id}"
         return f"#{node_operator_id} - {metadata.name}"
 
-    async def _sub_node_operator_labels(self, group_info, block: int) -> list[dict]:
+    async def _sub_node_operator_allocations(self, group_info, block: int) -> list[dict]:
+        sub_node_operators = _sub_node_operators(group_info)
+        node_operator_ids = [
+            int(read_field(operator, "nodeOperatorId", 0)) for operator in sub_node_operators
+        ]
+        weights = await self._fetch_node_operator_weights(tuple(node_operator_ids), block)
+        total_weighted_share = sum(
+            int(read_field(operator, "share", 1)) * weights[node_operator_id]
+            for operator, node_operator_id in zip(
+                sub_node_operators, node_operator_ids, strict=True
+            )
+        )
+
         return [
             {
-                "nodeOperatorId": int(read_field(operator, "nodeOperatorId", 0)),
+                "nodeOperatorId": node_operator_id,
                 "share": int(read_field(operator, "share", 1)),
+                "effectiveWeight": weights[node_operator_id],
+                "weightedShare": _weight_share_basis_points(
+                    int(read_field(operator, "share", 1)),
+                    weights[node_operator_id],
+                    total_weighted_share,
+                ),
                 "label": await self._node_operator_label(
-                    int(read_field(operator, "nodeOperatorId", 0)), block
+                    node_operator_id, block
                 ),
             }
-            for operator in _sub_node_operators(group_info)
+            for operator, node_operator_id in zip(
+                sub_node_operators, node_operator_ids, strict=True
+            )
         ]
+
+    async def _fetch_node_operator_weights(
+        self, node_operator_ids: tuple[int, ...], block: int
+    ) -> dict[int, int]:
+        if not node_operator_ids:
+            return {}
+        weights = await self.meta_registry.functions.getOperatorWeights(
+            list(node_operator_ids)
+        ).call(block_identifier=block)
+        return {
+            node_operator_id: int(weight)
+            for node_operator_id, weight in zip(node_operator_ids, weights, strict=True)
+        }
 
     @register_event("TargetValidatorsCountChanged")
     async def target_validators_count_changed(self, event: Event):
@@ -276,7 +315,8 @@ class CuratedEventMessages(BaseModule):
         if not operator_ids:
             return None
         message = template(
-            event.args["groupId"], await self._sub_node_operator_labels(group_info, event.block)
+            event.args["groupId"],
+            await self._sub_node_operator_allocations(group_info, event.block),
         ) + await self.event_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
@@ -289,6 +329,18 @@ class CuratedEventMessages(BaseModule):
         )
         previous_shares = _sub_node_operator_shares(previous_group)
         current_shares = _sub_node_operator_shares(event.args["groupInfo"])
+        previous_operators = {
+            int(read_field(operator, "nodeOperatorId", 0)): operator
+            for operator in await self._sub_node_operator_allocations(
+                previous_group, event.block - 1
+            )
+        }
+        current_operators = {
+            int(read_field(operator, "nodeOperatorId", 0)): operator
+            for operator in await self._sub_node_operator_allocations(
+                event.args["groupInfo"], event.block
+            )
+        }
         changed_operator_ids = set(previous_shares) ^ set(current_shares)
         changed_operator_ids.update(
             node_operator_id
@@ -298,6 +350,7 @@ class CuratedEventMessages(BaseModule):
         if not changed_operator_ids:
             return None
 
+        footer = await self.event_footer(event)
         plan = NotificationPlan().with_broadcast_targets(changed_operator_ids)
         for node_operator_id in changed_operator_ids:
             node_operator_label = await self._node_operator_label(node_operator_id, event.block)
@@ -306,24 +359,24 @@ class CuratedEventMessages(BaseModule):
                     group_id,
                     node_operator_label,
                     "added",
-                    new_share=current_shares[node_operator_id],
+                    new_operator=current_operators[node_operator_id],
                 )
             elif node_operator_id not in current_shares:
-                message = template(group_id, node_operator_label, "removed")
+                message = template(
+                    group_id,
+                    node_operator_label,
+                    "removed",
+                    old_operator=previous_operators[node_operator_id],
+                )
             else:
                 message = template(
                     group_id,
                     node_operator_label,
                     "changed",
-                    previous_shares[node_operator_id],
-                    current_shares[node_operator_id],
+                    old_operator=previous_operators[node_operator_id],
+                    new_operator=current_operators[node_operator_id],
                 )
-            targeted_event = replace(
-                event, args=dict(event.args) | {"nodeOperatorId": node_operator_id}
-            )
-            plan.add_node_operator_message(
-                node_operator_id, f"{message}{await self.event_footer(targeted_event)}"
-            )
+            plan.add_node_operator_message(node_operator_id, f"{message}{footer}")
         return plan
 
     @register_event("OperatorGroupCleared")
@@ -337,7 +390,7 @@ class CuratedEventMessages(BaseModule):
             return None
         message = template(
             event.args["groupId"],
-            await self._sub_node_operator_labels(previous_group, event.block),
+            await self._sub_node_operator_allocations(previous_group, event.block - 1),
         ) + await self.event_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 

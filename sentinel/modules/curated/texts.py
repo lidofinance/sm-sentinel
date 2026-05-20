@@ -51,7 +51,7 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     ),
     EventDefinition(
         "VettedSigningKeysCountDecreased",
-        "- 🚨 Uploaded invalid or duplicated keys",
+        "- 🚨 Invalid or duplicated keys has been uploaded",
         EventGroup.KEY_MANAGEMENT,
     ),
     EventDefinition(
@@ -61,7 +61,7 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     ),
     EventDefinition(
         "KeyAllocatedBalanceChanged",
-        "- 👀 Key allocated bond balance changed",
+        "- 👀 Key balance increased",
         EventGroup.KEY_MANAGEMENT,
     ),
     EventDefinition(
@@ -101,7 +101,7 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     ),
     EventDefinition(
         "FeeSplitsSet",
-        "- ℹ️ Reward fee splits changed",
+        "- ℹ️ Fee splits changed",
         EventGroup.ADDRESS_AND_REWARD_CHANGES,
     ),
     EventDefinition("BondDepositedETH", "- ✅ ETH bond deposited", EventGroup.BOND),
@@ -330,10 +330,8 @@ def vetted_signing_keys_count_decreased():
     cfg = get_config()
     return markdown(
         "🚨 ",
-        Bold("Vetted keys count decreased"),
+        Bold("Invalid or duplicated keys has been uploaded"),
         nl(),
-        "Invalid or duplicated keys has been uploaded.",
-        nl(1),
         "Remove the keys on the ",
         TextLink("Curated Module UI", url=cfg.module_ui_url or ""),
         ".",
@@ -519,25 +517,52 @@ def custom_rewards_claimer_set(rewards_claimer, previous_rewards_claimer=None):
 def _format_fee_splits(fee_splits) -> str:
     if not fee_splits:
         return "none"
-    return "; ".join(
-        f"{read_field(fee_split, 'recipient', 0)}: {read_field(fee_split, 'share', 1)}"
+    return "\n".join(
+        f"- {read_field(fee_split, 'recipient', 0)}: "
+        f"{_format_basis_points_percent(read_field(fee_split, 'share', 1))}"
         for fee_split in fee_splits
     )
 
 
+def _fee_splits_title(fee_splits, previous_fee_splits) -> str:
+    if fee_splits and not previous_fee_splits:
+        return "Fee splits set"
+    if not fee_splits and previous_fee_splits:
+        return "Fee splits removed"
+    return "Fee splits changed"
+
+
 @register_event_message("FeeSplitsSet")
-def fee_splits_set(fee_splits):
+def fee_splits_set(fee_splits, previous_fee_splits=None):
     cfg = get_config()
-    return markdown(
+    previous_fee_splits = previous_fee_splits or []
+    parts: list = [
         "ℹ️ ",
-        Bold("Fee splits changed"),
+        Bold(_fee_splits_title(fee_splits, previous_fee_splits)),
         nl(),
-        "Fee splits: ",
-        Code(_format_fee_splits(fee_splits)),
-        nl(1),
-        "Review the current rewards setup in the ",
-        TextLink("Curated Module UI", url=cfg.module_ui_url or ""),
-        ".",
+    ]
+    if previous_fee_splits:
+        parts.extend(
+            [
+                "Previous fee splits:",
+                nl(1),
+                _format_fee_splits(previous_fee_splits),
+                nl(),
+            ]
+        )
+    if fee_splits:
+        parts.extend(["Fee splits:", nl(1), _format_fee_splits(fee_splits), nl()])
+    if not fee_splits and not previous_fee_splits:
+        parts.extend(["Fee splits: ", Code("none"), nl(1)])
+    parts.extend(
+        [
+            "Review the current rewards setup in the ",
+            TextLink("Curated Module UI", url=cfg.module_ui_url or ""),
+            ".",
+        ]
+    )
+    return markdown(
+        *parts,
     )
 
 
@@ -910,7 +935,7 @@ def node_operator_effective_weight_changed(old_weight, new_weight):
         parts.extend(
             [
                 nl(),
-                "The Node Operator may no longer receive deposit allocation until weight is restored.",
+                "The Node Operator will no longer receive deposit allocation until weight is restored.",
             ]
         )
     return markdown(*parts)
@@ -920,7 +945,9 @@ def _format_sub_node_operators(sub_node_operators) -> str:
     if not sub_node_operators:
         return "none"
     return "\n".join(
-        f"- {_operator_label(operator)}\n  Share: {_format_basis_points_percent(read_field(operator, 'share', 1))}"
+        f"- {_operator_label(operator)}"
+        f"\n  Weighted share: {_format_basis_points_percent(read_field(operator, 'weightedShare', 3))} "
+        f"(group share: {_format_basis_points_percent(read_field(operator, 'share', 1))})"
         for operator in sub_node_operators
     )
 
@@ -942,6 +969,17 @@ def _operator_label(operator) -> str:
     return f"#{read_field(operator, 'nodeOperatorId', 0)}"
 
 
+def _operator_group_allocation_lines(
+    operator, prefix: str = ""
+) -> list:
+    weighted_share_label = "Weighted share" if not prefix else f"{prefix}weighted share"
+    return [
+        f"{weighted_share_label}: ",
+        Code(_format_basis_points_percent(read_field(operator, "weightedShare", 3))),
+        f" (group share: {_format_basis_points_percent(read_field(operator, 'share', 1))})",
+    ]
+
+
 @register_event_message("OperatorGroupCreated")
 def operator_group_created(group_id, sub_node_operators):
     return markdown(
@@ -959,7 +997,7 @@ def operator_group_created(group_id, sub_node_operators):
 
 @register_event_message("OperatorGroupUpdated")
 def operator_group_updated(
-    group_id, node_operator_label, change_kind, old_share=None, new_share=None
+    group_id, node_operator_label, change_kind, old_operator=None, new_operator=None
 ):
     title_prefix = "🚨 " if change_kind == "removed" else "ℹ️ "
     parts: list = [
@@ -979,8 +1017,7 @@ def operator_group_updated(
                 [
                     "Node Operator added.",
                     nl(),
-                    "Share: ",
-                    Code(_format_basis_points_percent(new_share)),
+                    *_operator_group_allocation_lines(new_operator),
                 ]
             )
         case "changed":
@@ -988,15 +1025,27 @@ def operator_group_updated(
                 [
                     "Node Operator share changed.",
                     nl(),
-                    "Share: ",
+                    "Weighted share: ",
                     Code(
-                        f"{_format_basis_points_percent(old_share)} -> "
-                        f"{_format_basis_points_percent(new_share)}"
+                        f"{_format_basis_points_percent(read_field(old_operator, 'weightedShare', 3))} -> "
+                        f"{_format_basis_points_percent(read_field(new_operator, 'weightedShare', 3))}"
+                    ),
+                    nl(),
+                    "Group share: ",
+                    Code(
+                        f"{_format_basis_points_percent(read_field(old_operator, 'share', 1))} -> "
+                        f"{_format_basis_points_percent(read_field(new_operator, 'share', 1))}"
                     ),
                 ]
             )
         case "removed":
-            parts.append("Node Operator removed from this group.")
+            parts.extend(
+                [
+                    "Node Operator removed from this group.",
+                    nl(),
+                    *_operator_group_allocation_lines(old_operator, "Previous "),
+                ]
+            )
     return markdown(*parts)
 
 

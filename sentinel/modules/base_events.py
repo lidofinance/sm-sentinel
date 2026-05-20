@@ -64,8 +64,9 @@ class BaseModule(EventMessageEngineBase):
         return template(humanize_wei(amount)) + await self.event_footer(event)
 
     async def key_allocated_balance_changed(self, event: Event):
-        # TODO: batch multiple key balance updates for the same operator when event grouping is
-        # available; doing it here would lose per-key context and notification targeting.
+        # TODO: batch multiple key balance updates for the same operator. There is no
+        # event grouping mechanic yet; doing it here would lose per-key context and
+        # notification targeting.
         template = self._require_message_template(event.event)
         return template(
             event.args["keyIndex"],
@@ -103,7 +104,12 @@ class BaseModule(EventMessageEngineBase):
 
     async def fee_splits_set(self, event: Event):
         template = self._require_message_template(event.event)
-        return template(event.args["feeSplits"]) + await self.event_footer(event)
+        previous_fee_splits = await self.accounting.functions.getFeeSplits(
+            event.args["nodeOperatorId"]
+        ).call(block_identifier=event.block - 1)
+        return template(
+            event.args["feeSplits"], previous_fee_splits
+        ) + await self.event_footer(event)
 
     async def bond_debt_increased(self, event: Event):
         template = self._require_message_template(event.event)
@@ -114,6 +120,9 @@ class BaseModule(EventMessageEngineBase):
         return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
 
     async def expired_bond_lock_removed(self, event: Event):
+        # TODO: add a time-based notification for expired bond locks that can be
+        # unlocked. This is not event-based, so it needs a separate scheduled scan
+        # rather than a quick event handler change.
         template = self._require_message_template(event.event)
         return template() + await self.event_footer(event)
 
@@ -148,6 +157,9 @@ class BaseModule(EventMessageEngineBase):
         return template(key, key_url, event.args["keyIndex"]) + await self.event_footer(event)
 
     async def validator_exit_request(self, event: Event):
+        # TODO: batch multiple requested-to-exit keys for the same operator and add
+        # delayed reminders. Before reminding, verify each validator has not exited
+        # yet; this needs persisted pending-exit state plus a scheduled recheck.
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["validatorPubkey"])
         request_date = datetime.datetime.fromtimestamp(event.args["timestamp"], datetime.UTC)
