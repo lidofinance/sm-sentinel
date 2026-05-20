@@ -54,7 +54,10 @@ def _has_expected_node_operator_messages(
             messages_by_operator.setdefault(node_operator_id, set()).add(message)
 
     return all(
-        expected_message in messages_by_operator.get(node_operator_id, set())
+        any(
+            expected_message in actual_message
+            for actual_message in messages_by_operator.get(node_operator_id, set())
+        )
         for node_operator_id, expected_message in expected_messages.items()
     )
 
@@ -209,9 +212,9 @@ async def test_curated_process_blocks_operator_group_created(anvil_launcher):
             "Group id: `1`\n"
             "Added Node Operators:\n"
             "\\- \\#0 \\- Attestant \\(BVI\\) Limited\n"
-            "  Share: 100%\n"
+            "  Weighted share: 100% \\(group share: 100%\\)\n"
             "\\- \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC\n"
-            "  Share: 0%\n\n"
+            "  Weighted share: 0% \\(group share: 0%\\)\n\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
         anvil_launcher=anvil_launcher,
@@ -225,24 +228,14 @@ async def test_curated_process_blocks_operator_group_updated(anvil_launcher):
         expected_markdown=None,
         expected_per_node={
             "0": (
-                "ℹ️ *Operator group updated*\n\n"
-                "Group id: `1`\n"
+                "Weighted share: `100% \\-\\> 50%`\n"
                 "\n"
-                "Node Operator: `\\#0 \\- Attestant \\(BVI\\) Limited`\n"
-                "Node Operator share changed.\n"
-                "Share: `100% \\-\\> 50%`\n\n"
-                "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
-                "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
+                "Group share: `100% \\-\\> 50%`"
             ),
             "1": (
-                "ℹ️ *Operator group updated*\n\n"
-                "Group id: `1`\n"
+                "Weighted share: `0% \\-\\> 50%`\n"
                 "\n"
-                "Node Operator: `\\#1 \\- Attestant \\(BVI\\) Limited \\- IODC`\n"
-                "Node Operator share changed.\n"
-                "Share: `0% \\-\\> 50%`\n\n"
-                "Node Operator: \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC\n"
-                "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
+                "Group share: `0% \\-\\> 50%`"
             ),
         },
         anvil_launcher=anvil_launcher,

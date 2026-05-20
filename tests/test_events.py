@@ -53,22 +53,44 @@ class _FakeCall:
         return self.value
 
 
+class _FakeOperatorWeightsCall:
+    def __init__(
+        self,
+        node_operator_ids: list[int],
+        weights_by_block: dict[int | None, dict[int, int]],
+    ):
+        self.node_operator_ids = node_operator_ids
+        self.weights_by_block = weights_by_block
+        self.calls: list[dict] = []
+
+    async def call(self, **kwargs):
+        self.calls.append(kwargs)
+        block = kwargs.get("block_identifier")
+        weights = self.weights_by_block.get(block, self.weights_by_block.get(None, {}))
+        return [weights.get(node_operator_id, 1) for node_operator_id in self.node_operator_ids]
+
+
 class _FakeMetaRegistry:
     def __init__(
         self,
         group_info=None,
         metadata_names: dict[int, str | None] | None = None,
         metadata_exc: Exception | None = None,
+        operator_weights_by_block: dict[int | None, dict[int, int]] | None = None,
     ):
         self.metadata_names = metadata_names or {}
         self.metadata_exc = metadata_exc
+        self.operator_weights_by_block = operator_weights_by_block or {}
         self.group_ids: list[int] = []
         self.metadata_ids: list[int] = []
+        self.operator_weight_ids: list[list[int]] = []
         self.call = _FakeCall(group_info)
         self.metadata_calls: list[_FakeCall] = []
+        self.operator_weight_calls: list[_FakeOperatorWeightsCall] = []
         self.functions = SimpleNamespace(
             getOperatorGroup=self.get_operator_group,
             getOperatorMetadata=self.get_operator_metadata,
+            getOperatorWeights=self.get_operator_weights,
         )
 
     def get_operator_group(self, group_id: int):
@@ -88,6 +110,12 @@ class _FakeMetaRegistry:
         self.metadata_calls.append(call)
         return call
 
+    def get_operator_weights(self, node_operator_ids: list[int]):
+        self.operator_weight_ids.append(node_operator_ids)
+        call = _FakeOperatorWeightsCall(node_operator_ids, self.operator_weights_by_block)
+        self.operator_weight_calls.append(call)
+        return call
+
 
 class _FakeCuratedModule:
     def __init__(self, operators_count: int):
@@ -99,16 +127,32 @@ class _FakeCuratedModule:
 
 
 class _FakeCuratedAccounting:
-    def __init__(self, operator_curve_ids: dict[int, int]):
+    def __init__(
+        self,
+        operator_curve_ids: dict[int, int] | None = None,
+        fee_splits_by_operator: dict[int, list] | None = None,
+    ):
+        self.fee_splits_by_operator = fee_splits_by_operator or {}
         self.operator_curve_ids = operator_curve_ids
         self.curve_id_calls: list[int] = []
         self.curve_id_call_objects: list[_FakeCall] = []
-        self.functions = SimpleNamespace(getBondCurveId=self.get_bond_curve_id)
+        self.fee_split_calls: list[int] = []
+        self.fee_split_call_objects: list[_FakeCall] = []
+        self.functions = SimpleNamespace(
+            getBondCurveId=self.get_bond_curve_id,
+            getFeeSplits=self.get_fee_splits,
+        )
 
     def get_bond_curve_id(self, node_operator_id: int):
         self.curve_id_calls.append(node_operator_id)
         call = _FakeCall(self.operator_curve_ids[node_operator_id])
         self.curve_id_call_objects.append(call)
+        return call
+
+    def get_fee_splits(self, node_operator_id: int):
+        self.fee_split_calls.append(node_operator_id)
+        call = _FakeCall(self.fee_splits_by_operator.get(node_operator_id, []))
+        self.fee_split_call_objects.append(call)
         return call
 
 
@@ -229,10 +273,83 @@ def test_fee_splits_set_template_renders_fee_split_entries():
     finally:
         clear_config()
 
-    assert "Fee splits changed" in message
-    assert "0x111: 7000" in message
-    assert "0x222: 3000" in message
+    assert "Fee splits set" in message
+    assert "0x111: 70%" in message
+    assert "0x222: 30%" in message
     assert "[CSM UI](https://csm.lido.fi)" in message
+
+
+def test_fee_splits_set_template_renders_previous_and_current_entries():
+    set_config(SimpleNamespace(module_ui_url="https://csm.lido.fi"))
+    try:
+        message = fee_splits_set(
+            [{"recipient": "0x111", "share": 8000}],
+            [{"recipient": "0x111", "share": 7000}],
+        )
+    finally:
+        clear_config()
+
+    assert "Fee splits changed" in message
+    assert "Previous fee splits" in message
+    assert "0x111: 70%" in message
+    assert "Fee splits" in message
+    assert "0x111: 80%" in message
+
+
+def test_fee_splits_set_template_renders_removed_state():
+    set_config(SimpleNamespace(module_ui_url="https://csm.lido.fi"))
+    try:
+        message = fee_splits_set([], [{"recipient": "0x111", "share": 7000}])
+    finally:
+        clear_config()
+
+    assert "Fee splits removed" in message
+    assert "Previous fee splits" in message
+    assert "0x111: 70%" in message
+
+
+@pytest.mark.asyncio
+async def test_fee_splits_set_reads_previous_fee_splits_at_previous_block():
+    from sentinel.models import Event
+    from sentinel.modules.community.events import CommunityEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    accounting = _FakeCuratedAccounting(
+        fee_splits_by_operator={42: [{"recipient": "0x111", "share": 7000}]}
+    )
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=object(),
+            accounting=accounting,
+            parameters_registry=object(),
+            meta_registry=_FakeMetaRegistry(),
+        ),
+        notifiable_events={"FeeSplitsSet"},
+    )
+    event_messages = CommunityEventMessages(adapter, distribution_log_fetcher=_FakeFetcher({}))
+    event = Event(
+        event="FeeSplitsSet",
+        args={
+            "nodeOperatorId": 42,
+            "feeSplits": [{"recipient": "0x222", "share": 3000}],
+        },
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert accounting.fee_split_calls == [42]
+    assert [call.calls for call in accounting.fee_split_call_objects] == [
+        [{"block_identifier": 122}]
+    ]
+    assert "Fee splits changed" in plan.broadcast
+    assert "Previous fee splits" in plan.broadcast
+    assert "0x111: 70%" in plan.broadcast
+    assert "0x222: 30%" in plan.broadcast
 
 
 def test_limit_set_mode_1():
@@ -777,7 +894,10 @@ async def test_curated_operator_group_created_targets_all_added_sub_node_operato
     from sentinel.notifications import NotificationPlan
 
     _set_event_config()
-    meta_registry = _FakeMetaRegistry(metadata_names={10: "Operator Ten", 11: "Operator Eleven"})
+    meta_registry = _FakeMetaRegistry(
+        metadata_names={10: "Operator Ten", 11: "Operator Eleven"},
+        operator_weights_by_block={123: {10: 1, 11: 4}},
+    )
     adapter = _FakeCuratedAdapter(
         contracts=SimpleNamespace(
             module=object(),
@@ -811,13 +931,18 @@ async def test_curated_operator_group_created_targets_all_added_sub_node_operato
     assert "Operator group created" in plan.broadcast
     assert "Added Node Operators" in plan.broadcast
     assert "Operator Ten" in plan.broadcast
-    assert "Share: 0\\.04%" in plan.broadcast
+    assert "Weighted share: 50% \\(group share: 0\\.04%\\)" in plan.broadcast
+    assert "Effective weight" not in plan.broadcast
     assert "Operator Eleven" in plan.broadcast
-    assert "Share: 0\\.01%" in plan.broadcast
+    assert "Weighted share: 50% \\(group share: 0\\.01%\\)" in plan.broadcast
     assert meta_registry.metadata_ids == [10, 11]
     assert [call.calls for call in meta_registry.metadata_calls] == [
         [{"block_identifier": 123}],
         [{"block_identifier": 123}],
+    ]
+    assert meta_registry.operator_weight_ids == [[10, 11]]
+    assert [call.calls for call in meta_registry.operator_weight_calls] == [
+        [{"block_identifier": 123}]
     ]
 
 
@@ -836,6 +961,10 @@ async def test_curated_operator_group_updated_targets_only_changed_sub_node_oper
             ]
         },
         metadata_names={10: "Operator Ten", 11: "Operator Eleven", 12: "Operator Twelve"},
+        operator_weights_by_block={
+            122: {10: 1, 11: 4},
+            123: {10: 1, 12: 5},
+        },
     )
     adapter = _FakeCuratedAdapter(
         contracts=SimpleNamespace(
@@ -873,12 +1002,25 @@ async def test_curated_operator_group_updated_targets_only_changed_sub_node_oper
     assert set(plan.per_node_operator) == {"10", "11", "12"}
     assert "Node Operator: `\\#10 \\- Operator Ten`" in plan.per_node_operator["10"]
     assert "Node Operator share changed" in plan.per_node_operator["10"]
-    assert "`0\\.04% \\-\\> 0\\.05%`" in plan.per_node_operator["10"]
+    assert "Weighted share: `50% \\-\\> 33\\.33%`" in plan.per_node_operator["10"]
+    assert "Group share: `0\\.04% \\-\\> 0\\.05%`" in plan.per_node_operator["10"]
+    assert "Effective weight" not in plan.per_node_operator["10"]
+    assert plan.per_node_operator["10"].count("Node Operator: ") == 1
     assert "Node Operator: `\\#11 \\- Operator Eleven`" in plan.per_node_operator["11"]
     assert "Node Operator removed from this group" in plan.per_node_operator["11"]
+    assert "Previous weighted share: `50%`" in plan.per_node_operator["11"]
+    assert "\\(group share: 0\\.01%\\)" in plan.per_node_operator["11"]
+    assert plan.per_node_operator["11"].count("Node Operator: ") == 1
     assert "Node Operator: `\\#12 \\- Operator Twelve`" in plan.per_node_operator["12"]
     assert "Node Operator added" in plan.per_node_operator["12"]
-    assert "Share: `0\\.02%`" in plan.per_node_operator["12"]
+    assert "Weighted share: `66\\.66%` \\(group share: 0\\.02%\\)" in plan.per_node_operator["12"]
+    assert "Effective weight" not in plan.per_node_operator["12"]
+    assert plan.per_node_operator["12"].count("Node Operator: ") == 1
+    assert meta_registry.operator_weight_ids == [[10, 11], [10, 12]]
+    assert [call.calls for call in meta_registry.operator_weight_calls] == [
+        [{"block_identifier": 122}],
+        [{"block_identifier": 123}],
+    ]
 
 
 @pytest.mark.asyncio
@@ -896,6 +1038,7 @@ async def test_curated_operator_group_cleared_lists_all_affected_node_operators(
             ]
         },
         metadata_names={10: "Operator Ten", 11: "Operator Eleven"},
+        operator_weights_by_block={122: {10: 1, 11: 4}},
     )
     adapter = _FakeCuratedAdapter(
         contracts=SimpleNamespace(
@@ -924,10 +1067,15 @@ async def test_curated_operator_group_cleared_lists_all_affected_node_operators(
     assert "Operator group cleared" in plan.broadcast
     assert "Affected Node Operators" in plan.broadcast
     assert "Operator Ten" in plan.broadcast
-    assert "Share: 0\\.04%" in plan.broadcast
+    assert "Weighted share: 50% \\(group share: 0\\.04%\\)" in plan.broadcast
+    assert "Effective weight" not in plan.broadcast
     assert "Operator Eleven" in plan.broadcast
-    assert "Share: 0\\.01%" in plan.broadcast
+    assert "Weighted share: 50% \\(group share: 0\\.01%\\)" in plan.broadcast
     assert "nodeOperatorId" not in plan.broadcast
+    assert meta_registry.operator_weight_ids == [[10, 11]]
+    assert [call.calls for call in meta_registry.operator_weight_calls] == [
+        [{"block_identifier": 122}]
+    ]
 
 
 @pytest.mark.asyncio
