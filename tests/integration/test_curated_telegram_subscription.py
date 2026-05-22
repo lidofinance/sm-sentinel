@@ -227,16 +227,8 @@ async def test_curated_process_blocks_operator_group_updated(anvil_launcher):
         fork_block=2805615,
         expected_markdown=None,
         expected_per_node={
-            "0": (
-                "Weighted share: `100% \\-\\> 50%`\n"
-                "\n"
-                "Group share: `100% \\-\\> 50%`"
-            ),
-            "1": (
-                "Weighted share: `0% \\-\\> 50%`\n"
-                "\n"
-                "Group share: `0% \\-\\> 50%`"
-            ),
+            "0": ("Weighted share: `100% \\-\\> 50%`\n\nGroup share: `100% \\-\\> 50%`"),
+            "1": ("Weighted share: `0% \\-\\> 50%`\n\nGroup share: `0% \\-\\> 50%`"),
         },
         anvil_launcher=anvil_launcher,
     )
