@@ -51,8 +51,13 @@ def assert_event_mappings() -> None:
     )
 
 
+def _operator_group_name(group_info) -> str | None:
+    name = read_field(group_info, "name", 0)
+    return name if isinstance(name, str) and name else None
+
+
 def _sub_node_operators(group_info):
-    return read_field(group_info, "subNodeOperators", 0)
+    return read_field(group_info, "subNodeOperators", 1)
 
 
 def _sub_node_operator_ids(group_info) -> set[int]:
@@ -168,9 +173,7 @@ class CuratedEventMessages(BaseModule):
                     weights[node_operator_id],
                     total_weighted_share,
                 ),
-                "label": await self._node_operator_label(
-                    node_operator_id, block
-                ),
+                "label": await self._node_operator_label(node_operator_id, block),
             }
             for operator, node_operator_id in zip(
                 sub_node_operators, node_operator_ids, strict=True
@@ -317,6 +320,7 @@ class CuratedEventMessages(BaseModule):
         message = template(
             event.args["groupId"],
             await self._sub_node_operator_allocations(group_info, event.block),
+            group_name=_operator_group_name(group_info),
         ) + await self.event_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
@@ -327,8 +331,32 @@ class CuratedEventMessages(BaseModule):
         previous_group = await self.meta_registry.functions.getOperatorGroup(group_id).call(
             block_identifier=event.block - 1
         )
+        current_group = event.args["groupInfo"]
+        previous_group_name = _operator_group_name(previous_group)
+        current_group_name = _operator_group_name(current_group)
         previous_shares = _sub_node_operator_shares(previous_group)
-        current_shares = _sub_node_operator_shares(event.args["groupInfo"])
+        current_shares = _sub_node_operator_shares(current_group)
+        changed_operator_ids = set(previous_shares) ^ set(current_shares)
+        changed_operator_ids.update(
+            node_operator_id
+            for node_operator_id in set(previous_shares) & set(current_shares)
+            if previous_shares[node_operator_id] != current_shares[node_operator_id]
+        )
+        is_renamed = previous_group_name != current_group_name
+        if not changed_operator_ids:
+            if not is_renamed:
+                return None
+            operator_ids = set(current_shares)
+            if not operator_ids:
+                return None
+            message = template(
+                group_id,
+                change_kind="renamed",
+                old_group_name=previous_group_name,
+                new_group_name=current_group_name,
+            ) + await self.event_footer(event)
+            return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
+
         previous_operators = {
             int(read_field(operator, "nodeOperatorId", 0)): operator
             for operator in await self._sub_node_operator_allocations(
@@ -337,44 +365,52 @@ class CuratedEventMessages(BaseModule):
         }
         current_operators = {
             int(read_field(operator, "nodeOperatorId", 0)): operator
-            for operator in await self._sub_node_operator_allocations(
-                event.args["groupInfo"], event.block
-            )
+            for operator in await self._sub_node_operator_allocations(current_group, event.block)
         }
-        changed_operator_ids = set(previous_shares) ^ set(current_shares)
-        changed_operator_ids.update(
-            node_operator_id
-            for node_operator_id in set(previous_shares) & set(current_shares)
-            if previous_shares[node_operator_id] != current_shares[node_operator_id]
-        )
-        if not changed_operator_ids:
-            return None
-
+        target_operator_ids = changed_operator_ids | (set(current_shares) if is_renamed else set())
         footer = await self.event_footer(event)
-        plan = NotificationPlan().with_broadcast_targets(changed_operator_ids)
-        for node_operator_id in changed_operator_ids:
-            node_operator_label = await self._node_operator_label(node_operator_id, event.block)
-            if node_operator_id not in previous_shares:
+        plan = NotificationPlan().with_broadcast_targets(target_operator_ids)
+        for node_operator_id in target_operator_ids:
+            if node_operator_id not in changed_operator_ids:
+                message = template(
+                    group_id,
+                    change_kind="renamed",
+                    old_group_name=previous_group_name,
+                    new_group_name=current_group_name,
+                )
+            elif node_operator_id not in previous_shares:
+                node_operator_label = await self._node_operator_label(node_operator_id, event.block)
                 message = template(
                     group_id,
                     node_operator_label,
                     "added",
                     new_operator=current_operators[node_operator_id],
+                    group_name=current_group_name,
+                    old_group_name=previous_group_name if is_renamed else None,
+                    new_group_name=current_group_name if is_renamed else None,
                 )
             elif node_operator_id not in current_shares:
+                node_operator_label = await self._node_operator_label(node_operator_id, event.block)
                 message = template(
                     group_id,
                     node_operator_label,
                     "removed",
                     old_operator=previous_operators[node_operator_id],
+                    group_name=current_group_name,
+                    old_group_name=previous_group_name if is_renamed else None,
+                    new_group_name=current_group_name if is_renamed else None,
                 )
             else:
+                node_operator_label = await self._node_operator_label(node_operator_id, event.block)
                 message = template(
                     group_id,
                     node_operator_label,
                     "changed",
                     old_operator=previous_operators[node_operator_id],
                     new_operator=current_operators[node_operator_id],
+                    group_name=current_group_name,
+                    old_group_name=previous_group_name if is_renamed else None,
+                    new_group_name=current_group_name if is_renamed else None,
                 )
             plan.add_node_operator_message(node_operator_id, f"{message}{footer}")
         return plan
@@ -391,6 +427,7 @@ class CuratedEventMessages(BaseModule):
         message = template(
             event.args["groupId"],
             await self._sub_node_operator_allocations(previous_group, event.block - 1),
+            group_name=_operator_group_name(previous_group),
         ) + await self.event_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 

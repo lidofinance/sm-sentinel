@@ -209,7 +209,7 @@ async def test_curated_process_blocks_operator_group_created(anvil_launcher):
         fork_block=2766235,
         expected_markdown=(
             "ℹ️ *Operator group created*\n\n"
-            "Group id: `1`\n"
+            "Group: `1`\n"
             "Added Node Operators:\n"
             "\\- \\#0 \\- Attestant \\(BVI\\) Limited\n"
             "  Weighted share: 100% \\(group share: 100%\\)\n"

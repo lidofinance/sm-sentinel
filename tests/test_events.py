@@ -249,6 +249,49 @@ def test_curated_burn_and_lock_templates_render_eth_asset_amounts():
     assert "Compensated amount: `0\\.5 ETH`" in bond_lock_compensated("0.5 ether")
 
 
+def test_curated_operator_group_templates_render_compact_group_label():
+    from sentinel.modules.curated.texts import (
+        operator_group_cleared,
+        operator_group_created,
+        operator_group_updated,
+    )
+
+    sub_node_operators = [
+        {
+            "label": "#10 - Operator Ten",
+            "share": 10000,
+            "weightedShare": 10000,
+        }
+    ]
+
+    created = operator_group_created(7, sub_node_operators, group_name="New Group")
+    assert "Group: `7: New Group`" in created
+    assert "Group id:" not in created
+    assert "Group name:" not in created
+
+    cleared = operator_group_cleared(7, sub_node_operators, group_name="")
+    assert "Group: `7`" in cleared
+    assert "Group: `7:" not in cleared
+
+    renamed_from_empty = operator_group_updated(
+        7,
+        change_kind="renamed",
+        old_group_name=None,
+        new_group_name="New Group",
+    )
+    assert "Group: `7: <empty\\> \\-\\> New Group`" in renamed_from_empty
+    assert "Group name changed" in renamed_from_empty
+    assert "Node Operator:" not in renamed_from_empty
+
+    renamed_to_empty = operator_group_updated(
+        7,
+        change_kind="renamed",
+        old_group_name="Old Group",
+        new_group_name=None,
+    )
+    assert "Group: `7: Old Group \\-\\> <empty\\>`" in renamed_to_empty
+
+
 def test_validator_slashing_reported_template_renders_pubkey_link():
     message = validator_slashing_reported(
         "0x1234",
@@ -913,10 +956,11 @@ async def test_curated_operator_group_created_targets_all_added_sub_node_operato
         args={
             "groupId": 7,
             "groupInfo": {
+                "name": "Test Group",
                 "subNodeOperators": [
                     {"nodeOperatorId": 10, "share": 4},
                     {"nodeOperatorId": 11, "share": 1},
-                ]
+                ],
             },
         },
         block=123,
@@ -929,6 +973,7 @@ async def test_curated_operator_group_created_targets_all_added_sub_node_operato
     assert isinstance(plan, NotificationPlan)
     assert plan.broadcast_node_operator_ids == {"10", "11"}
     assert "Operator group created" in plan.broadcast
+    assert "Group: `7: Test Group`" in plan.broadcast
     assert "Added Node Operators" in plan.broadcast
     assert "Operator Ten" in plan.broadcast
     assert "Weighted share: 50% \\(group share: 0\\.04%\\)" in plan.broadcast
@@ -955,10 +1000,11 @@ async def test_curated_operator_group_updated_targets_only_changed_sub_node_oper
     _set_event_config()
     meta_registry = _FakeMetaRegistry(
         {
+            "name": "Test Group",
             "subNodeOperators": [
                 {"nodeOperatorId": 10, "share": 4},
                 {"nodeOperatorId": 11, "share": 1},
-            ]
+            ],
         },
         metadata_names={10: "Operator Ten", 11: "Operator Eleven", 12: "Operator Twelve"},
         operator_weights_by_block={
@@ -981,10 +1027,11 @@ async def test_curated_operator_group_updated_targets_only_changed_sub_node_oper
         args={
             "groupId": 7,
             "groupInfo": {
+                "name": "Test Group",
                 "subNodeOperators": [
                     {"nodeOperatorId": 10, "share": 5},
                     {"nodeOperatorId": 12, "share": 2},
-                ]
+                ],
             },
         },
         block=123,
@@ -1024,6 +1071,133 @@ async def test_curated_operator_group_updated_targets_only_changed_sub_node_oper
 
 
 @pytest.mark.asyncio
+async def test_curated_operator_group_updated_notifies_group_name_change():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    meta_registry = _FakeMetaRegistry(
+        {
+            "name": "Old Group",
+            "subNodeOperators": [
+                {"nodeOperatorId": 10, "share": 4},
+                {"nodeOperatorId": 11, "share": 1},
+            ],
+        },
+        metadata_names={10: "Operator Ten", 11: "Operator Eleven"},
+        operator_weights_by_block={123: {10: 1, 11: 4}},
+    )
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            meta_registry=meta_registry,
+        ),
+        notifiable_events={"OperatorGroupUpdated"},
+    )
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="OperatorGroupUpdated",
+        args={
+            "groupId": 7,
+            "groupInfo": {
+                "name": "New Group",
+                "subNodeOperators": [
+                    {"nodeOperatorId": 10, "share": 4},
+                    {"nodeOperatorId": 11, "share": 1},
+                ],
+            },
+        },
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert meta_registry.group_ids == [7]
+    assert meta_registry.call.calls == [{"block_identifier": 122}]
+    assert plan.broadcast_node_operator_ids == {"10", "11"}
+    assert plan.per_node_operator == {}
+    assert "Operator group updated" in plan.broadcast
+    assert "Group: `7: Old Group \\-\\> New Group`" in plan.broadcast
+    assert "Group name changed" in plan.broadcast
+    assert "Node Operator:" not in plan.broadcast
+    assert meta_registry.operator_weight_ids == []
+
+
+@pytest.mark.asyncio
+async def test_curated_operator_group_updated_notifies_unchanged_operators_on_group_rename():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    meta_registry = _FakeMetaRegistry(
+        {
+            "name": "Old Group",
+            "subNodeOperators": [
+                {"nodeOperatorId": 10, "share": 4},
+                {"nodeOperatorId": 11, "share": 1},
+            ],
+        },
+        metadata_names={
+            10: "Operator Ten",
+            11: "Operator Eleven",
+            12: "Operator Twelve",
+        },
+        operator_weights_by_block={
+            122: {10: 1, 11: 4},
+            123: {10: 1, 11: 4, 12: 5},
+        },
+    )
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            meta_registry=meta_registry,
+        ),
+        notifiable_events={"OperatorGroupUpdated"},
+    )
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="OperatorGroupUpdated",
+        args={
+            "groupId": 7,
+            "groupInfo": {
+                "name": "New Group",
+                "subNodeOperators": [
+                    {"nodeOperatorId": 10, "share": 4},
+                    {"nodeOperatorId": 11, "share": 1},
+                    {"nodeOperatorId": 12, "share": 2},
+                ],
+            },
+        },
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+    )
+
+    plan = await event_messages.get_notification_plan(event)
+
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids == {"10", "11", "12"}
+    assert set(plan.per_node_operator) == {"10", "11", "12"}
+    assert "Group: `7: Old Group \\-\\> New Group`" in plan.per_node_operator["10"]
+    assert "Group name changed" in plan.per_node_operator["10"]
+    assert "Node Operator:" not in plan.per_node_operator["10"]
+    assert "Group name changed" in plan.per_node_operator["11"]
+    assert "Node Operator:" not in plan.per_node_operator["11"]
+    assert "Node Operator added" in plan.per_node_operator["12"]
+    assert "Operator Twelve" in plan.per_node_operator["12"]
+    assert "Group: `7: Old Group \\-\\> New Group`" in plan.per_node_operator["12"]
+
+
+@pytest.mark.asyncio
 async def test_curated_operator_group_cleared_lists_all_affected_node_operators():
     from sentinel.models import Event
     from sentinel.modules.curated.events import CuratedEventMessages
@@ -1032,10 +1206,11 @@ async def test_curated_operator_group_cleared_lists_all_affected_node_operators(
     _set_event_config()
     meta_registry = _FakeMetaRegistry(
         {
+            "name": "Test Group",
             "subNodeOperators": [
                 {"nodeOperatorId": 10, "share": 4},
                 {"nodeOperatorId": 11, "share": 1},
-            ]
+            ],
         },
         metadata_names={10: "Operator Ten", 11: "Operator Eleven"},
         operator_weights_by_block={122: {10: 1, 11: 4}},
@@ -1065,6 +1240,7 @@ async def test_curated_operator_group_cleared_lists_all_affected_node_operators(
     assert meta_registry.call.calls == [{"block_identifier": 122}]
     assert plan.broadcast_node_operator_ids == {"10", "11"}
     assert "Operator group cleared" in plan.broadcast
+    assert "Group: `7: Test Group`" in plan.broadcast
     assert "Affected Node Operators" in plan.broadcast
     assert "Operator Ten" in plan.broadcast
     assert "Weighted share: 50% \\(group share: 0\\.04%\\)" in plan.broadcast

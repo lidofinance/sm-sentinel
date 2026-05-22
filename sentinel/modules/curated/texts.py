@@ -969,9 +969,7 @@ def _operator_label(operator) -> str:
     return f"#{read_field(operator, 'nodeOperatorId', 0)}"
 
 
-def _operator_group_allocation_lines(
-    operator, prefix: str = ""
-) -> list:
+def _operator_group_allocation_lines(operator, prefix: str = "") -> list:
     weighted_share_label = "Weighted share" if not prefix else f"{prefix}weighted share"
     return [
         f"{weighted_share_label}: ",
@@ -980,14 +978,33 @@ def _operator_group_allocation_lines(
     ]
 
 
+def _operator_group_identity(
+    group_name: str | None = None,
+    old_group_name: str | None = None,
+    new_group_name: str | None = None,
+) -> str | None:
+    if old_group_name != new_group_name and (old_group_name or new_group_name):
+        return f"{old_group_name or '<empty>'} -> {new_group_name or '<empty>'}"
+    if group_name:
+        return group_name
+    return None
+
+
+def _operator_group_label(group_id, **kwargs) -> str:
+    identity = _operator_group_identity(**kwargs)
+    if identity is None:
+        return str(group_id)
+    return f"{group_id}: {identity}"
+
+
 @register_event_message("OperatorGroupCreated")
-def operator_group_created(group_id, sub_node_operators):
+def operator_group_created(group_id, sub_node_operators, group_name=None):
     return markdown(
         "ℹ️ ",
         Bold("Operator group created"),
         nl(),
-        "Group id: ",
-        Code(str(group_id)),
+        "Group: ",
+        Code(_operator_group_label(group_id, group_name=group_name)),
         nl(1),
         "Added Node Operators:",
         nl(1),
@@ -997,21 +1014,46 @@ def operator_group_created(group_id, sub_node_operators):
 
 @register_event_message("OperatorGroupUpdated")
 def operator_group_updated(
-    group_id, node_operator_label, change_kind, old_operator=None, new_operator=None
+    group_id,
+    node_operator_label=None,
+    change_kind=None,
+    old_operator=None,
+    new_operator=None,
+    group_name=None,
+    old_group_name=None,
+    new_group_name=None,
 ):
     title_prefix = "🚨 " if change_kind == "removed" else "ℹ️ "
     parts: list = [
         title_prefix,
         Bold("Operator group updated"),
         nl(),
-        "Group id: ",
-        Code(str(group_id)),
+        "Group: ",
+        Code(
+            _operator_group_label(
+                group_id,
+                group_name=group_name,
+                old_group_name=old_group_name,
+                new_group_name=new_group_name,
+            )
+        ),
         nl(),
-        "Node Operator: ",
-        Code(str(node_operator_label)),
-        nl(1),
     ]
+    if node_operator_label is not None:
+        parts.extend(
+            [
+                "Node Operator: ",
+                Code(str(node_operator_label)),
+                nl(1),
+            ]
+        )
     match change_kind:
+        case "renamed":
+            parts.extend(
+                [
+                    "Group name changed.",
+                ]
+            )
         case "added":
             parts.extend(
                 [
@@ -1050,13 +1092,13 @@ def operator_group_updated(
 
 
 @register_event_message("OperatorGroupCleared")
-def operator_group_cleared(group_id, sub_node_operators):
+def operator_group_cleared(group_id, sub_node_operators, group_name=None):
     return markdown(
         "🚨 ",
         Bold("Operator group cleared"),
         nl(),
-        "Group id: ",
-        Code(str(group_id)),
+        "Group: ",
+        Code(_operator_group_label(group_id, group_name=group_name)),
         nl(1),
         "Affected Node Operators:",
         nl(1),
