@@ -107,9 +107,9 @@ class BaseModule(EventMessageEngineBase):
         previous_fee_splits = await self.accounting.functions.getFeeSplits(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
-        return template(
-            event.args["feeSplits"], previous_fee_splits
-        ) + await self.event_footer(event)
+        return template(event.args["feeSplits"], previous_fee_splits) + await self.event_footer(
+            event
+        )
 
     async def bond_debt_increased(self, event: Event):
         template = self._require_message_template(event.event)
