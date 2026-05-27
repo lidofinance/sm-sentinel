@@ -978,23 +978,28 @@ def _operator_group_allocation_lines(operator, prefix: str = "") -> list:
     ]
 
 
-def _operator_group_identity(
-    group_name: str | None = None,
+def _operator_group_label(group_id, group_name: str | None = None) -> str:
+    if not group_name:
+        return str(group_id)
+    return f"{group_id}: {group_name}"
+
+
+def _operator_group_name_change_parts(
     old_group_name: str | None = None,
     new_group_name: str | None = None,
-) -> str | None:
-    if old_group_name != new_group_name and (old_group_name or new_group_name):
-        return f"{old_group_name or '<empty>'} -> {new_group_name or '<empty>'}"
-    if group_name:
-        return group_name
-    return None
-
-
-def _operator_group_label(group_id, **kwargs) -> str:
-    identity = _operator_group_identity(**kwargs)
-    if identity is None:
-        return str(group_id)
-    return f"{group_id}: {identity}"
+) -> list:
+    if old_group_name == new_group_name or not (old_group_name or new_group_name):
+        return []
+    if old_group_name and new_group_name:
+        return [
+            "Group renamed: ",
+            Code(old_group_name),
+            " -> ",
+            Code(new_group_name),
+        ]
+    if new_group_name:
+        return ["Group name set: ", Code(new_group_name)]
+    return ["Group name cleared: ", Code(old_group_name)]
 
 
 @register_event_message("OperatorGroupCreated")
@@ -1024,6 +1029,10 @@ def operator_group_updated(
     new_group_name=None,
 ):
     title_prefix = "🚨 " if change_kind == "removed" else "ℹ️ "
+    group_name_change_parts = _operator_group_name_change_parts(
+        old_group_name=old_group_name,
+        new_group_name=new_group_name,
+    )
     parts: list = [
         title_prefix,
         Bold("Operator group updated"),
@@ -1032,13 +1041,17 @@ def operator_group_updated(
         Code(
             _operator_group_label(
                 group_id,
-                group_name=group_name,
-                old_group_name=old_group_name,
-                new_group_name=new_group_name,
+                group_name=None if group_name_change_parts else group_name,
             )
         ),
-        nl(),
+        nl(1),
     ]
+    if group_name_change_parts:
+        parts.extend(group_name_change_parts)
+        if node_operator_label is not None or change_kind != "renamed":
+            parts.append(nl())
+    else:
+        parts.append(nl(1))
     if node_operator_label is not None:
         parts.extend(
             [
@@ -1049,11 +1062,7 @@ def operator_group_updated(
         )
     match change_kind:
         case "renamed":
-            parts.extend(
-                [
-                    "Group name changed.",
-                ]
-            )
+            pass
         case "added":
             parts.extend(
                 [
