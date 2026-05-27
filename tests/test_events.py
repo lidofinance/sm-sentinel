@@ -279,8 +279,9 @@ def test_curated_operator_group_templates_render_compact_group_label():
         old_group_name=None,
         new_group_name="New Group",
     )
-    assert "Group: `7: <empty\\> \\-\\> New Group`" in renamed_from_empty
-    assert "Group name changed" in renamed_from_empty
+    assert "Group: `7`" in renamed_from_empty
+    assert "Group name set: `New Group`" in renamed_from_empty
+    assert "<empty" not in renamed_from_empty
     assert "Node Operator:" not in renamed_from_empty
 
     renamed_to_empty = operator_group_updated(
@@ -289,7 +290,17 @@ def test_curated_operator_group_templates_render_compact_group_label():
         old_group_name="Old Group",
         new_group_name=None,
     )
-    assert "Group: `7: Old Group \\-\\> <empty\\>`" in renamed_to_empty
+    assert "Group: `7`" in renamed_to_empty
+    assert "Group name cleared: `Old Group`" in renamed_to_empty
+
+    renamed = operator_group_updated(
+        7,
+        change_kind="renamed",
+        old_group_name="Old Group",
+        new_group_name="New Group",
+    )
+    assert "Group: `7`" in renamed
+    assert "Group renamed: `Old Group` \\-\\> `New Group`" in renamed
 
 
 def test_validator_slashing_reported_template_renders_pubkey_link():
@@ -1123,8 +1134,8 @@ async def test_curated_operator_group_updated_notifies_group_name_change():
     assert plan.broadcast_node_operator_ids == {"10", "11"}
     assert plan.per_node_operator == {}
     assert "Operator group updated" in plan.broadcast
-    assert "Group: `7: Old Group \\-\\> New Group`" in plan.broadcast
-    assert "Group name changed" in plan.broadcast
+    assert "Group: `7`" in plan.broadcast
+    assert "Group renamed: `Old Group` \\-\\> `New Group`" in plan.broadcast
     assert "Node Operator:" not in plan.broadcast
     assert meta_registry.operator_weight_ids == []
 
@@ -1187,14 +1198,15 @@ async def test_curated_operator_group_updated_notifies_unchanged_operators_on_gr
     assert isinstance(plan, NotificationPlan)
     assert plan.broadcast_node_operator_ids == {"10", "11", "12"}
     assert set(plan.per_node_operator) == {"10", "11", "12"}
-    assert "Group: `7: Old Group \\-\\> New Group`" in plan.per_node_operator["10"]
-    assert "Group name changed" in plan.per_node_operator["10"]
+    assert "Group: `7`" in plan.per_node_operator["10"]
+    assert "Group renamed: `Old Group` \\-\\> `New Group`" in plan.per_node_operator["10"]
     assert "Node Operator:" not in plan.per_node_operator["10"]
-    assert "Group name changed" in plan.per_node_operator["11"]
+    assert "Group renamed: `Old Group` \\-\\> `New Group`" in plan.per_node_operator["11"]
     assert "Node Operator:" not in plan.per_node_operator["11"]
     assert "Node Operator added" in plan.per_node_operator["12"]
     assert "Operator Twelve" in plan.per_node_operator["12"]
-    assert "Group: `7: Old Group \\-\\> New Group`" in plan.per_node_operator["12"]
+    assert "Group: `7`" in plan.per_node_operator["12"]
+    assert "Group renamed: `Old Group` \\-\\> `New Group`" in plan.per_node_operator["12"]
 
 
 @pytest.mark.asyncio
