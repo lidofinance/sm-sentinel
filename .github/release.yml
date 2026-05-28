@@ -9,3 +9,6 @@ changelog:
     - title: Fixes
       labels:
         - release:patch
+    - title: Other Changes
+      labels:
+        - "*"

@@ -21,6 +21,9 @@ jobs:
       GH_REPO: ${{ github.repository }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Resolve release state
         id: state
         run: |
@@ -30,14 +33,14 @@ jobs:
           previous_release_version="${previous_release_tag#v}"
           managed_draft_tag="$(
             gh release list --repo "$GH_REPO" --limit 100 --json tagName,name,isDraft,isPrerelease \
-              --jq '.[] | select(.isDraft and .isPrerelease and (.name | startswith("Release candidate "))) | .tagName' \
+              --jq '.[] | select(.isDraft and (.isPrerelease | not) and (.name | startswith("SM Sentinel "))) | .tagName' \
               | head -n1
           )"
-          gh release list --repo "$GH_REPO" --limit 100 --exclude-drafts --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease) | .tagName' > "$RUNNER_TEMP/prerelease-tags.txt"
-          echo "previous_release_tag=${previous_release_tag}" >> "$GITHUB_OUTPUT"
-          echo "previous_release_version=${previous_release_version:-0.0.0}" >> "$GITHUB_OUTPUT"
-          echo "managed_draft_tag=${managed_draft_tag}" >> "$GITHUB_OUTPUT"
+          {
+            echo "previous_release_tag=${previous_release_tag}"
+            echo "previous_release_version=${previous_release_version:-0.0.0}"
+            echo "managed_draft_tag=${managed_draft_tag}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Classify merged pull request
         id: pr
@@ -50,7 +53,7 @@ jobs:
             *) echo "bump=patch" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - name: Suggest prerelease tag
+      - name: Suggest release tag
         id: suggestion
         env:
           PREVIOUS_RELEASE_VERSION: ${{ steps.state.outputs.previous_release_version }}
@@ -59,45 +62,41 @@ jobs:
         run: |
           python3 - <<'PY'
           import os
-          from packaging.version import Version
 
-          previous = Version(os.environ["PREVIOUS_RELEASE_VERSION"])
-          pr_bump = os.environ["PR_BUMP"]
-          managed_draft_tag = os.environ.get("MANAGED_DRAFT_TAG", "")
+
+          def parse_version(value: str) -> tuple[int, int, int]:
+              parts = value.removeprefix("v").split(".")
+              if len(parts) != 3:
+                  raise ValueError(f"Expected SemVer major.minor.patch, got {value!r}")
+              return tuple(int(part) for part in parts)
+
+
+          previous = parse_version(os.environ["PREVIOUS_RELEASE_VERSION"])
+          major, minor, patch = previous
 
           target = {
-              "patch": Version(f"{previous.major}.{previous.minor}.{previous.micro + 1}"),
-              "minor": Version(f"{previous.major}.{previous.minor + 1}.0"),
-              "major": Version(f"{previous.major + 1}.0.0"),
-          }[pr_bump]
+              "patch": (major, minor, patch + 1),
+              "minor": (major, minor + 1, 0),
+              "major": (major + 1, 0, 0),
+          }[os.environ["PR_BUMP"]]
 
+          managed_draft_tag = os.environ.get("MANAGED_DRAFT_TAG", "")
           if managed_draft_tag:
-              draft = Version(managed_draft_tag.removeprefix("v"))
-              target = max(target, Version(draft.base_version))
-
-          current = max(
-            (
-              version.pre[1]
-              for tag in open(os.path.join(os.environ["RUNNER_TEMP"], "prerelease-tags.txt"), encoding="utf-8")
-              if tag.strip()
-              for version in [Version(tag.strip().removeprefix("v"))]
-              if version.pre and version.pre[0] == "rc" and version.base_version == target.base_version
-            ),
-            default=0,
-          )
+              target = max(target, parse_version(managed_draft_tag))
 
           effective_bump = (
-              "major" if target.major > previous.major else
-              "minor" if target.minor > previous.minor else
+              "major" if target[0] > previous[0] else
+              "minor" if target[1] > previous[1] else
               "patch"
           )
+          tag = f"v{target[0]}.{target[1]}.{target[2]}"
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-            fh.write(f"bump={effective_bump}\n")
-            fh.write(f"tag=v{target.base_version}rc{current + 1}\n")
+              fh.write(f"bump={effective_bump}\n")
+              fh.write(f"tag={tag}\n")
           PY
 
-      - name: Create draft prerelease
+      - name: Create draft release
         env:
           PREVIOUS_RELEASE_TAG: ${{ steps.state.outputs.previous_release_tag }}
           PR_BUMP: ${{ steps.pr.outputs.bump }}
@@ -105,39 +104,33 @@ jobs:
           SUGGESTED_TAG: ${{ steps.suggestion.outputs.tag }}
           MANAGED_DRAFT_TAG: ${{ steps.state.outputs.managed_draft_tag }}
           TARGET_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
-          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
-          MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          [ -z "$MANAGED_DRAFT_TAG" ] || gh release delete "$MANAGED_DRAFT_TAG" --repo "$GH_REPO" --yes --cleanup-tag
+          if [ -n "$MANAGED_DRAFT_TAG" ]; then
+            gh release delete "$MANAGED_DRAFT_TAG" --repo "$GH_REPO" --yes --cleanup-tag
+          fi
 
-          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          Suggested bump: \`$SUGGESTED_BUMP\`
-
-          Previous stable release: \`${PREVIOUS_RELEASE_TAG:-v0.0.0}\`
-
-          Merged pull request:
-
-          - [#$MERGED_PR_NUMBER]($MERGED_PR_URL) $MERGED_PR_TITLE
-          - classified as \`$PR_BUMP\` from PR labels
-          EOF
+          if git ls-remote --exit-code --tags origin "refs/tags/$SUGGESTED_TAG" >/dev/null 2>&1; then
+            echo "Release tag '$SUGGESTED_TAG' already exists outside the managed draft release." >&2
+            exit 1
+          fi
 
           args=(
             "$SUGGESTED_TAG"
+            --repo "$GH_REPO"
             --draft
-            --prerelease
             --target "$TARGET_SHA"
-            --title "Release candidate $SUGGESTED_TAG"
-            --notes-file "$RUNNER_TEMP/release-notes.md"
+            --title "SM Sentinel $SUGGESTED_TAG"
             --generate-notes
           )
           [ -z "$PREVIOUS_RELEASE_TAG" ] || args+=(--notes-start-tag "$PREVIOUS_RELEASE_TAG")
-          gh release create --repo "$GH_REPO" "${args[@]}"
+          gh release create "${args[@]}"
 
           {
-            echo "Prepared draft prerelease \`$SUGGESTED_TAG\`."
+            echo "Prepared draft release \`$SUGGESTED_TAG\`."
             echo
-            echo "Suggested bump: \`$SUGGESTED_BUMP\`"
+            echo "Suggested bump: \`$SUGGESTED_BUMP\`."
             echo
-            echo "Review and adjust the draft release in GitHub before publishing it."
+            echo "Merged pull request label bump: \`$PR_BUMP\`."
+            echo
+            echo "Review the draft release notes, then use GitHub's **Publish release** button to publish images."
           } >> "$GITHUB_STEP_SUMMARY"

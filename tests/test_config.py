@@ -55,9 +55,7 @@ async def test_get_config_async_prefers_module_envs(monkeypatch, stub_discover_c
 
     monkeypatch.setenv("WEB3_SOCKET_PROVIDER", "wss://example.invalid/ws")
     monkeypatch.setenv("MODULE_ADDRESS", "0x0000000000000000000000000000000000000001")
-    monkeypatch.setenv("CSM_ADDRESS", "0x0000000000000000000000000000000000000002")
     monkeypatch.setenv("MODULE_UI_URL", "https://module.example")
-    monkeypatch.setenv("CSM_UI_URL", "https://legacy.example")
 
     cfg = await get_config_async()
 
@@ -68,17 +66,16 @@ async def test_get_config_async_prefers_module_envs(monkeypatch, stub_discover_c
 
 
 @pytest.mark.asyncio
-async def test_get_config_async_falls_back_to_csm_ui(monkeypatch, stub_discover_contract_addresses):
+async def test_get_config_async_leaves_module_ui_unset(monkeypatch, stub_discover_contract_addresses):
     clear_config()
 
     monkeypatch.setenv("WEB3_SOCKET_PROVIDER", "wss://example.invalid/ws")
     monkeypatch.setenv("MODULE_ADDRESS", "0x0000000000000000000000000000000000000001")
-    monkeypatch.setenv("CSM_UI_URL", "https://legacy.example")
     monkeypatch.delenv("MODULE_UI_URL", raising=False)
 
     cfg = await get_config_async()
 
-    assert cfg.module_ui_url == "https://legacy.example"
+    assert cfg.module_ui_url is None
     clear_config()
 
 

@@ -1,64 +1,50 @@
 name: Build and Push Harbor Image
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Upstream release tag to build from
-        required: true
-        type: string
-      publish_dev:
-        description: Also publish the image with the dev tag alongside the source release tag
-        required: false
-        default: false
-        type: boolean
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 env:
-  APP: csm-sentinel
+  APP: sm-sentinel
   REGISTRY: harbor.dev.k8s-dev.org
   REPOSITORY: team-csm
   REGISTRY_USER: robot$team-csm-rw
-  SOURCE_REPOSITORY: skhomuti/csm-sentinel
 
 concurrency:
-  group: harbor-publish
+  group: harbor-publish-${{ github.event.release.tag_name }}
   cancel-in-progress: true
 
 jobs:
   build-and-push:
     runs-on: ubuntu-22.04
     steps:
-      - name: Resolve image tags
-        id: target
+      - name: Validate release tag
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/${{ env.APP }}
-          SOURCE_TAG: ${{ github.event.inputs.tag }}
-          PUBLISH_DEV: ${{ github.event.inputs.publish_dev }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          python3 - <<'PY'
-          import os
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be a stable SemVer tag like v1.2.3; got '$RELEASE_TAG'." >&2
+            exit 1
+          fi
 
-          image = os.environ["IMAGE"]
-          source_tag = os.environ["SOURCE_TAG"].removeprefix("v")
-          publish_tags = [source_tag]
-
-          if os.environ.get("PUBLISH_DEV") == "true":
-              publish_tags.append("dev")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write("image_tags<<EOF\n")
-              fh.write("\n".join(f"{image}:{tag}" for tag in publish_tags))
-              fh.write("\nEOF\n")
-          PY
-
-      - name: Checkout upstream source
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.SOURCE_REPOSITORY }}
-          ref: ${{ github.event.inputs.tag }}
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/${{ env.APP }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
 
       - name: Set up Docker Buildx
         id: buildx
@@ -77,6 +63,7 @@ jobs:
           context: .
           builder: ${{ steps.buildx.outputs.name }}
           push: true
-          tags: ${{ steps.target.outputs.image_tags }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

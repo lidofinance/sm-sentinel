@@ -83,16 +83,12 @@ async def _build_config_from_env() -> Config:
     token = os.getenv("TOKEN")
     web3_socket_provider = os.getenv("WEB3_SOCKET_PROVIDER")
     healthcheck_host, healthcheck_port = get_healthcheck_bind_from_env()
-    raw_module_address = os.getenv("MODULE_ADDRESS")
-    raw_csm_address = os.getenv("CSM_ADDRESS")
-    if raw_csm_address:
-        logger.warning("CSM_ADDRESS is deprecated; use MODULE_ADDRESS instead.")
-    module_address = raw_module_address or raw_csm_address
+    module_address = os.getenv("MODULE_ADDRESS")
 
     if not web3_socket_provider:
         raise RuntimeError("WEB3_SOCKET_PROVIDER must be configured")
     if not module_address:
-        raise RuntimeError("MODULE_ADDRESS or CSM_ADDRESS must be configured")
+        raise RuntimeError("MODULE_ADDRESS must be configured")
 
     addresses = await _discover_contract_addresses_with_retry(
         web3_socket_provider,
@@ -107,12 +103,6 @@ async def _build_config_from_env() -> Config:
     else:
         process_blocks_requests_per_second = None
 
-    raw_module_ui_url = os.getenv("MODULE_UI_URL")
-    raw_csm_ui_url = os.getenv("CSM_UI_URL")
-    if raw_csm_ui_url:
-        logger.warning("CSM_UI_URL is deprecated; use MODULE_UI_URL instead.")
-    module_ui_url = raw_module_ui_url or raw_csm_ui_url
-
     raw_block_from = os.getenv("BLOCK_FROM")
     block_from = int(raw_block_from) if raw_block_from else None
 
@@ -125,7 +115,7 @@ async def _build_config_from_env() -> Config:
         contract_addresses=addresses,
         etherscan_url=os.getenv("ETHERSCAN_URL"),
         beaconchain_url=os.getenv("BEACONCHAIN_URL"),
-        module_ui_url=module_ui_url,
+        module_ui_url=os.getenv("MODULE_UI_URL"),
         block_batch_size=int(os.getenv("BLOCK_BATCH_SIZE", 10_000)),
         process_blocks_requests_per_second=process_blocks_requests_per_second,
         block_from=block_from,

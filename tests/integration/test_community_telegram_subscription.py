@@ -25,7 +25,7 @@ def community_hoodi_config_env():
         m.setenv("MODULE_ADDRESS", COMMUNITY_HOODI_MODULE)
         m.setenv("ETHERSCAN_URL", "https://etherscan.io")
         m.setenv("BEACONCHAIN_URL", "https://beaconcha.in")
-        m.setenv("CSM_UI_URL", "https://csm.lido.fi")
+        m.setenv("MODULE_UI_URL", "https://csm.lido.fi")
         clear_config()
         yield
     clear_config()
