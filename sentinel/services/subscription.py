@@ -1,19 +1,23 @@
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from telegram import LinkPreviewOptions
 from telegram.constants import ParseMode
 from telegram.ext import Application, TypeHandler
 
+from sentinel.app.health import HealthState
 from sentinel.models import Block, Event
 from sentinel.rpc import Subscription
 from sentinel.app.storage import BotStorage
+from sentinel.config import set_config
 
 logger = logging.getLogger(__name__)
 logging.getLogger("web3.providers.WebSocketProvider").setLevel(logging.WARNING)
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
+    from sentinel.modules.base import ModuleAdapter
 
 
 class TelegramSubscription(Subscription):
@@ -24,13 +28,21 @@ class TelegramSubscription(Subscription):
         w3,
         application: Application,
         event_messages,
-        allowed_events: set[str],
+        event_side_effects,
         *,
+        health: HealthState,
+        module_adapter: "ModuleAdapter",
         backfill_w3=None,
     ) -> None:
-        super().__init__(w3, allowed_events, backfill_w3=backfill_w3)
+        super().__init__(
+            w3,
+            health=health,
+            backfill_w3=backfill_w3,
+            module_adapter=module_adapter,
+        )
         self.application = application
         self.event_messages = event_messages
+        self.event_side_effects = event_side_effects
         self._ignore_subscription_events_until_block: int | None = None
 
     def start_catchup(self, until_block: int) -> None:
@@ -41,7 +53,52 @@ class TelegramSubscription(Subscription):
     def finish_catchup(self) -> None:
         self._ignore_subscription_events_until_block = None
 
+    async def handle_csm_version_changed(self, csm_version: int) -> None:
+        from sentinel.app.contracts import CommunityContractAddresses
+        from sentinel.app.module_adapter import build_module_adapter_from_config
+        from sentinel.app.runtime import get_runtime_from_application
+        from sentinel.modules.community.adapter import CommunityModuleAdapter
+
+        runtime = get_runtime_from_application(self.application)
+        if not isinstance(
+            runtime.config.contract_addresses, CommunityContractAddresses
+        ) or not isinstance(runtime.module_adapter, CommunityModuleAdapter):
+            logger.warning(
+                "Ignoring CSM version change for non-community module",
+                extra={"module_type": runtime.config.contract_addresses.module_type.value},
+            )
+            return
+
+        if runtime.module_adapter.csm_version == csm_version:
+            self.reconfigure_module_adapter(runtime.module_adapter)
+            return
+
+        contract_addresses = replace(
+            runtime.config.contract_addresses,
+            csm_version=csm_version,
+        )
+        cfg = replace(runtime.config, contract_addresses=contract_addresses)
+        set_config(cfg)
+        module_adapter = build_module_adapter_from_config(
+            cfg,
+            runtime.chain.w3,
+            runtime.chain,
+        )
+
+        runtime.config = cfg
+        runtime.module_adapter = module_adapter
+        self.cfg = cfg
+        self.event_messages.cfg = cfg
+        self.event_messages.reconfigure(module_adapter)
+        self.event_side_effects.reconfigure(module_adapter)
+        self.reconfigure_module_adapter(module_adapter)
+        logger.info("CSM runtime bindings switched to version %s", csm_version)
+
+    async def _prepare_event_for_delivery(self, event: Event) -> None:
+        await self.event_side_effects.process_event(event)
+
     async def process_event_log(self, event: Event):
+        await self._prepare_event_for_delivery(event)
         await self.application.update_queue.put(event)
 
     async def process_new_block(self, block: Block):
@@ -53,6 +110,7 @@ class TelegramSubscription(Subscription):
         threshold = self._ignore_subscription_events_until_block
         if threshold is not None and event.block <= threshold:
             return
+        await self._prepare_event_for_delivery(event)
         await self.application.update_queue.put(event)
 
     async def handle_event_log(self, event: Event, context: "BotContext"):

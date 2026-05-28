@@ -5,7 +5,8 @@ import pytest
 
 from sentinel.app.storage import BotStorage
 from sentinel.jobs import JobContext, ALERT_INTERVAL_MINUTES
-from sentinel.texts import NO_NEW_BLOCKS_ADMIN_ALERT
+from sentinel.modules.community.texts import CommunityTexts
+from sentinel.modules.community.texts import NO_NEW_BLOCKS_ADMIN_ALERT
 
 
 class StubBot:
@@ -18,7 +19,10 @@ class StubBot:
 
 def _make_context(admin_ids: set[int], block: int, bot: StubBot) -> SimpleNamespace:
     bot_storage = BotStorage({"block": block})
-    runtime = SimpleNamespace(config=SimpleNamespace(admin_ids=admin_ids))
+    runtime = SimpleNamespace(
+        config=SimpleNamespace(admin_ids=admin_ids),
+        module_adapter=SimpleNamespace(texts=CommunityTexts),
+    )
     return SimpleNamespace(bot_storage=bot_storage, runtime=runtime, bot=bot)
 
 

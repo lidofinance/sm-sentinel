@@ -5,16 +5,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from sentinel.handlers.admin.common import admin_only
 from sentinel.handlers.state import Callback, States
 from sentinel.handlers.utils import get_active_subscription_counts, get_subscription_totals
-from sentinel.texts import (
-    ADMIN_BUTTON_BROADCAST,
-    ADMIN_BUTTON_SUBSCRIPTIONS,
-    ADMIN_MENU_TEXT,
-    BUTTON_BACK,
-)
 from sentinel.utils import chunk_text
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
+
 
 @admin_only(failure_state=States.WELCOME)
 async def admin_menu(update: Update, context: "BotContext") -> States:
@@ -22,12 +17,23 @@ async def admin_menu(update: Update, context: "BotContext") -> States:
     if query is None:
         return States.ADMIN
     await query.answer()
+    texts = context.runtime.module_adapter.texts
     keyboard = [
-        [InlineKeyboardButton(ADMIN_BUTTON_SUBSCRIPTIONS, callback_data=Callback.ADMIN_SUBSCRIPTIONS.value)],
-        [InlineKeyboardButton(ADMIN_BUTTON_BROADCAST, callback_data=Callback.ADMIN_BROADCAST.value)],
-        [InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)],
+        [
+            InlineKeyboardButton(
+                texts.ADMIN_BUTTON_SUBSCRIPTIONS, callback_data=Callback.ADMIN_SUBSCRIPTIONS.value
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                texts.ADMIN_BUTTON_BROADCAST, callback_data=Callback.ADMIN_BROADCAST.value
+            )
+        ],
+        [InlineKeyboardButton(texts.BUTTON_BACK, callback_data=Callback.BACK.value)],
     ]
-    await query.edit_message_text(text=ADMIN_MENU_TEXT, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+        text=texts.ADMIN_MENU_TEXT, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return States.ADMIN
 
 
@@ -48,6 +54,7 @@ async def subscriptions(update: Update, context: "BotContext"):
         full_text = "No active subscriptions."
     else:
         total_subscribers, active_node_operators = get_subscription_totals(context.bot_storage)
+
         def sort_key(k: str):
             return (0, int(k)) if k.isdigit() else (1, k)
 
@@ -67,7 +74,10 @@ async def subscriptions(update: Update, context: "BotContext"):
         full_text = "\n".join(lines)
 
     chunks = chunk_text(full_text)
-    back_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_BACK, callback_data=Callback.BACK.value)]])
+    texts = context.runtime.module_adapter.texts
+    back_keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(texts.BUTTON_BACK, callback_data=Callback.BACK.value)]]
+    )
 
     if query is not None:
         if len(chunks) == 1:
@@ -76,7 +86,9 @@ async def subscriptions(update: Update, context: "BotContext"):
             await query.edit_message_text(text=chunks[0], reply_markup=None)
             for chunk in chunks[1:-1]:
                 await context.bot.send_message(chat_id=chat_id, text=chunk)
-            await context.bot.send_message(chat_id=chat_id, text=chunks[-1], reply_markup=back_keyboard)
+            await context.bot.send_message(
+                chat_id=chat_id, text=chunks[-1], reply_markup=back_keyboard
+            )
         return States.ADMIN
 
     if len(chunks) == 1:

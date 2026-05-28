@@ -3,9 +3,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-from eth_typing import ChecksumAddress
-
-from sentinel.module_types import ModuleType
+from sentinel.app.contracts import ContractAddresses
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +27,10 @@ class Config:
     filestorage_path: str
     token: str | None
     web3_socket_provider: str
+    healthcheck_host: str
+    healthcheck_port: int
 
-    # Addresses and IDs
-    module_address: ChecksumAddress
-    accounting_address: ChecksumAddress
-    parameters_registry_address: ChecksumAddress
-    vebo_address: ChecksumAddress
-    fee_distributor_address: ChecksumAddress
-    exit_penalties_address: ChecksumAddress
-    lido_locator_address: ChecksumAddress
-    staking_router_address: ChecksumAddress
-    staking_module_id: int
-    module_type: ModuleType
+    contract_addresses: ContractAddresses
 
     # URLs
     etherscan_url: str | None
@@ -72,10 +62,27 @@ RPC_DISCOVERY_TIMEOUT_SECONDS = 30
 RPC_DISCOVERY_RETRY_DELAY_SECONDS = 10
 
 
+def _parse_healthcheck_port(raw: str | None) -> int:
+    if not raw:
+        return 8080
+    port = int(raw)
+    if port <= 0 or port > 65535:
+        raise RuntimeError("HEALTHCHECK_PORT must be between 1 and 65535")
+    return port
+
+
+def get_healthcheck_bind_from_env() -> tuple[str, int]:
+    return (
+        os.getenv("HEALTHCHECK_HOST", "0.0.0.0"),
+        _parse_healthcheck_port(os.getenv("HEALTHCHECK_PORT")),
+    )
+
+
 async def _build_config_from_env() -> Config:
     filestorage_path = os.getenv("FILESTORAGE_PATH", ".storage")
     token = os.getenv("TOKEN")
     web3_socket_provider = os.getenv("WEB3_SOCKET_PROVIDER")
+    healthcheck_host, healthcheck_port = get_healthcheck_bind_from_env()
     raw_module_address = os.getenv("MODULE_ADDRESS")
     raw_csm_address = os.getenv("CSM_ADDRESS")
     if raw_csm_address:
@@ -113,16 +120,9 @@ async def _build_config_from_env() -> Config:
         filestorage_path=filestorage_path,
         token=token,
         web3_socket_provider=web3_socket_provider,
-        module_address=addresses.module,
-        accounting_address=addresses.accounting,
-        parameters_registry_address=addresses.parameters_registry,
-        vebo_address=addresses.vebo,
-        fee_distributor_address=addresses.fee_distributor,
-        exit_penalties_address=addresses.exit_penalties,
-        lido_locator_address=addresses.lido_locator,
-        staking_router_address=addresses.staking_router,
-        staking_module_id=addresses.staking_module_id,
-        module_type=addresses.module_type,
+        healthcheck_host=healthcheck_host,
+        healthcheck_port=healthcheck_port,
+        contract_addresses=addresses,
         etherscan_url=os.getenv("ETHERSCAN_URL"),
         beaconchain_url=os.getenv("BEACONCHAIN_URL"),
         module_ui_url=module_ui_url,
@@ -141,7 +141,9 @@ def get_config() -> Config:
         except RuntimeError:
             _CONFIG = asyncio.run(_build_config_from_env())
         else:
-            raise RuntimeError("get_config() cannot be called from an async context, use get_config_async() instead")
+            raise RuntimeError(
+                "get_config() cannot be called from an async context, use get_config_async() instead"
+            )
     return _CONFIG
 
 

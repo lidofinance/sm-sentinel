@@ -3,9 +3,6 @@ from typing import TYPE_CHECKING
 
 from telegram.ext import Application
 
-from sentinel.texts import NO_NEW_BLOCKS_ADMIN_ALERT
-
-
 logger = logging.getLogger(__name__)
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
@@ -26,6 +23,9 @@ class JobContext:
         self._last_checked_chain_head: int = 0
 
     async def schedule(self, app: Application):
+        if app.job_queue is None:
+            raise RuntimeError("Application job queue is not configured")
+
         interval_seconds = 60 * ALERT_INTERVAL_MINUTES
         app.job_queue.run_repeating(
             self.callback_block_processing_check,
@@ -45,6 +45,7 @@ class JobContext:
                 context.bot_storage.block.update(
                     max(context.bot_storage.block.value, self._chain_head)
                 )
+                context.runtime.health.mark_progress()
             logger.debug("Polled chain head: %s", self._chain_head)
         except Exception as exc:
             logger.warning("Failed to poll chain head: %s", exc)
@@ -73,7 +74,7 @@ class JobContext:
         admin_ids = context.runtime.config.admin_ids
         if not admin_ids:
             return
-        message = NO_NEW_BLOCKS_ADMIN_ALERT.format(
+        message = context.runtime.module_adapter.texts.NO_NEW_BLOCKS_ADMIN_ALERT.format(
             minutes=ALERT_INTERVAL_MINUTES,
             block=current_block,
         )

@@ -3,11 +3,12 @@
 These are the core guidelines for working in this repository.
 
 ## Project Structure & Modules
-- `src/sentinel/main.py`: CLI entrypoint; asserts event mappings and hands off to the runtime bootstrapper.
-- `src/sentinel/app/`: Runtime wiring (bootstrap, runtime container, context, persistence helpers).
-- `src/sentinel/handlers/`: Telegram handlers grouped by domain (`admin/`, `start.py`, `tracking.py`, etc.).
-- `src/sentinel/services/`: Long-running services such as the Web3 subscription layer.
-- `src/sentinel/jobs.py`, `rpc.py`, `events.py`, `texts.py`, `models.py`: Scheduled jobs, RPC subscriptions, event definitions, message templates, and ABI bindings.
+- `sentinel/main.py`: CLI entrypoint; asserts event mappings and hands off to the runtime bootstrapper.
+- `sentinel/app/`: Runtime wiring (bootstrap, runtime container, context, persistence helpers).
+- `sentinel/handlers/`: Telegram handlers grouped by domain (`admin/`, `start.py`, `tracking.py`, etc.).
+- `sentinel/services/`: Long-running services such as the Web3 subscription layer.
+- `sentinel/jobs.py`, `rpc.py`, `models.py`: Scheduled jobs, RPC subscriptions, and ABI bindings.
+- `sentinel/modules/<module>/events.py`, `sentinel/modules/<module>/texts.py`: Module-specific event definitions and message templates.
 - `tests/`: Pytest suite (unit/async tests, mocks).
 - `abi/`: Contract ABIs loaded by the app.
 - `.storage/`: Local persistence for Telegram state (mounted as a volume in Docker).
@@ -20,7 +21,7 @@ These are the core guidelines for working in this repository.
 - Lint: `uv run ruff check .`
 - Format: `uv run ruff format .`
 - Typecheck: `uv run ty check`
-- Run locally: `uv run python src/sentinel/main.py` (requires `.env`).
+- Run locally: `uv run python sentinel/main.py` (requires `.env`).
 - Docker: `docker compose up -d` (or `docker compose -f docker-compose-ethd.yml up -d` when co-running with eth-docker).
 
 ## Coding Style & Naming
@@ -72,10 +73,11 @@ This document captures practical conventions for working with this repo using ag
 ## Typing
 - Use built-in types for unions and generics: `str | None`, `set[int]` (Python ≥ 3.11).
 - Prefer precise types on public helpers; keep handlers small and focused.
+- Do not make constructor/runtime dependencies optional when they are guaranteed by construction. Pass required dependencies explicitly and let missing wiring fail early; reserve `| None` for real absence states and documented fallback behavior.
 - Skip `from __future__ import annotations`; the runtime is already Python 3.11, so use stringified forward refs when needed.
 
 ## Adding Events/ABIs
 - Place new ABIs under `abi/` and import them in `models.py`.
-- Extend `EVENTS_TO_FOLLOW` via decorators in `events.py` and add matching entries in `texts.py` and `EVENT_DESCRIPTIONS`.
+- Extend the module-specific event registry via decorators in `sentinel/modules/<module>/events.py` and add matching message/description entries in `sentinel/modules/<module>/texts.py`.
 - Ensure `rpc.py` subscriptions/topics include the relevant ABIs and addresses from `CFG`.
 - Maintain the invariant checked in `main.py` that events, messages, and descriptions are in sync.

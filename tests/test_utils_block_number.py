@@ -12,7 +12,7 @@ from sentinel.utils import normalize_block_number
         ("0", 0),
         ("42", 42),
         ("  42  ", 42),
-        (0x1a, 26),
+        (0x1A, 26),
         ("0x1a", 26),
         ("0X1A", 26),
     ],
@@ -25,4 +25,3 @@ def test_normalize_block_number_valid(inp, expected):
 def test_normalize_block_number_invalid(inp):
     with pytest.raises((TypeError, ValueError)):
         normalize_block_number(inp)
-

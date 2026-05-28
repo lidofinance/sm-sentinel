@@ -1,0 +1,204 @@
+from typing import TYPE_CHECKING
+
+from eth_utils import humanize_wei
+
+from sentinel.models import Event, EventHandler
+from sentinel.modules.base_events import BaseModule
+from sentinel.modules.community.adapter import COMMUNITY_NOTIFIABLE_EVENTS
+from sentinel.modules.community.texts import (
+    COMMUNITY_EVENT_DESCRIPTIONS,
+    COMMUNITY_EVENT_MESSAGES,
+    event_message_footer,
+    event_message_footer_tx_only,
+)
+from sentinel.modules.distribution import DistributionLogFetcher, default_distribution_log_fetcher
+from sentinel.modules.registry import RegisterEventHandler
+
+if TYPE_CHECKING:
+    from sentinel.modules.base import ModuleAdapter
+
+COMMUNITY_EVENTS_TO_FOLLOW: dict[str, EventHandler] = {}
+
+
+def register_event(event_name: str):
+    return RegisterEventHandler(COMMUNITY_EVENTS_TO_FOLLOW, event_name)
+
+
+def assert_event_mappings() -> None:
+    catalog_events = set(COMMUNITY_NOTIFIABLE_EVENTS)
+    events = set(COMMUNITY_EVENTS_TO_FOLLOW.keys())
+    messages = set(COMMUNITY_EVENT_MESSAGES.keys())
+    descriptions = set(COMMUNITY_EVENT_DESCRIPTIONS.keys())
+    assert catalog_events == events, "Missed events: " + str(
+        catalog_events.symmetric_difference(events)
+    )
+    assert events == messages, "Missed events: " + str(events.symmetric_difference(messages))
+    assert events == descriptions, "Missed events: " + str(
+        events.symmetric_difference(descriptions)
+    )
+
+
+class CommunityEventMessages(BaseModule):
+    event_handlers = COMMUNITY_EVENTS_TO_FOLLOW
+    event_messages = COMMUNITY_EVENT_MESSAGES
+
+    def __init__(
+        self,
+        module_adapter: "ModuleAdapter",
+        distribution_log_fetcher: "DistributionLogFetcher | None" = None,
+    ):
+        self.module_adapter = module_adapter
+        self._distribution_log_fetcher = (
+            distribution_log_fetcher or default_distribution_log_fetcher
+        )
+        super().__init__(module_adapter)
+
+    def reconfigure(self, module_adapter: "ModuleAdapter") -> None:
+        """Update module-specific bindings after a runtime module version switch."""
+
+        super().reconfigure(module_adapter)
+
+    async def event_footer(self, event: Event) -> str:
+        tx_link = self.transaction_link(event)
+        node_operator_id = event.args.get("nodeOperatorId")
+        if node_operator_id is None:
+            return event_message_footer_tx_only(tx_link).as_markdown()
+        return event_message_footer(node_operator_id, tx_link).as_markdown()
+
+    @register_event("ELRewardsStealingPenaltyCancelled")
+    async def el_rewards_stealing_penalty_cancelled(self, event: Event):
+        template = self._require_message_template(event.event)
+        remaining_amount = humanize_wei(
+            await self.accounting.functions.getActualLockedBond(event.args["nodeOperatorId"]).call(
+                block_identifier=event.block
+            )
+        )
+        return template(remaining_amount) + await self.event_footer(event)
+
+    @register_event("ELRewardsStealingPenaltyReported")
+    async def el_rewards_stealing_penalty_reported(self, event: Event):
+        template = self._require_message_template(event.event)
+        block_hash = self.to_hex(event.args["proposedBlockHash"])
+        block_template = self._require_template(
+            self.cfg.etherscan_block_url_template, "ETHERSCAN_URL"
+        )
+        block_link = block_template.format(block_hash)
+        return template(
+            humanize_wei(event.args["stolenAmount"]), block_link
+        ) + await self.event_footer(event)
+
+    @register_event("ELRewardsStealingPenaltySettled")
+    async def el_rewards_stealing_penalty_settled(self, event: Event):
+        template = self._require_message_template(event.event)
+        logs = await self.accounting.events.BondBurned().get_logs(
+            from_block=event.block, to_block=event.block
+        )
+        burnt_event = next(
+            filter(lambda x: x.args["nodeOperatorId"] == event.args["nodeOperatorId"], logs), None
+        )
+        if burnt_event:
+            amount = burnt_event.args["burnedAmount"]
+        else:
+            amount = 0
+        return template(humanize_wei(amount)) + await self.event_footer(event)
+
+    @register_event("WithdrawalSubmitted")
+    async def withdrawal_submitted(self, event: Event):
+        # TODO add exit penalties applied
+        template = self._require_message_template(event.event)
+        key = self.to_hex(
+            await self.module.functions.getSigningKeys(
+                event.args["nodeOperatorId"], event.args["keyIndex"], 1
+            ).call(block_identifier=event.block)
+        )
+        beacon_template = self._require_template(
+            self.cfg.beaconchain_url_template, "BEACONCHAIN_URL"
+        )
+        key_url = beacon_template.format(key)
+        return template(key, key_url, humanize_wei(event.args["amount"])) + await self.event_footer(
+            event
+        )
+
+    @register_event("ValidatorExitDelayProcessed")
+    async def validator_exit_delay_processed(self, event: Event):
+        template = self._require_message_template(event.event)
+        key, key_url = self.validator_link(event.args["pubkey"])
+        penalty_amount = (
+            event.args["delayPenalty"] if "delayPenalty" in event.args else event.args["delayFee"]
+        )
+        penalty = humanize_wei(penalty_amount)
+        return template(key, key_url, penalty) + await self.event_footer(event)
+
+    @register_event("TargetValidatorsCountChanged")
+    async def target_validators_count_changed(self, event: Event):
+        node_operator = await self.module.functions.getNodeOperator(
+            event.args["nodeOperatorId"]
+        ).call(block_identifier=event.block - 1)
+        mode_before = node_operator.targetLimitMode
+        limit_before = node_operator.targetLimit
+
+        template = self._require_message_template(event.event)
+        return template(
+            mode_before,
+            limit_before,
+            event.args["targetLimitMode"],
+            event.args["targetValidatorsCount"],
+        ) + await self.event_footer(event)
+
+    @register_event("Initialized")
+    async def initialized(self, event: Event):
+        template = self._require_message_template(event.event)
+        if event.args["version"] != 3:
+            return None
+        if event.address.lower() != self.module_address.lower():
+            return None
+        return template() + await self.event_footer(event)
+
+
+register_event("DepositedSigningKeysCountChanged")(
+    CommunityEventMessages.deposited_signing_keys_count_changed
+)
+register_event("TotalSigningKeysCountChanged")(
+    CommunityEventMessages.total_signing_keys_count_changed
+)
+register_event("VettedSigningKeysCountDecreased")(
+    CommunityEventMessages.vetted_signing_keys_count_decreased
+)
+register_event("KeyRemovalChargeApplied")(CommunityEventMessages.key_removal_charge_applied)
+register_event("KeyAllocatedBalanceChanged")(CommunityEventMessages.key_allocated_balance_changed)
+register_event("BondCurveSet")(CommunityEventMessages.bond_curve_set)
+register_event("NodeOperatorManagerAddressChangeProposed")(
+    CommunityEventMessages.node_operator_manager_address_change_proposed
+)
+register_event("NodeOperatorManagerAddressChanged")(
+    CommunityEventMessages.node_operator_manager_address_changed
+)
+register_event("NodeOperatorRewardAddressChangeProposed")(
+    CommunityEventMessages.node_operator_reward_address_change_proposed
+)
+register_event("NodeOperatorRewardAddressChanged")(
+    CommunityEventMessages.node_operator_reward_address_changed
+)
+register_event("CustomRewardsClaimerSet")(CommunityEventMessages.custom_rewards_claimer_set)
+register_event("FeeSplitsSet")(CommunityEventMessages.fee_splits_set)
+register_event("BondDebtIncreased")(CommunityEventMessages.bond_debt_increased)
+register_event("BondDebtCovered")(CommunityEventMessages.bond_debt_covered)
+register_event("ExpiredBondLockRemoved")(CommunityEventMessages.expired_bond_lock_removed)
+register_event("GeneralDelayedPenaltyReported")(
+    CommunityEventMessages.general_delayed_penalty_reported
+)
+register_event("GeneralDelayedPenaltySettled")(
+    CommunityEventMessages.general_delayed_penalty_settled
+)
+register_event("GeneralDelayedPenaltyCancelled")(
+    CommunityEventMessages.general_delayed_penalty_cancelled
+)
+register_event("GeneralDelayedPenaltyCompensated")(
+    CommunityEventMessages.general_delayed_penalty_compensated
+)
+register_event("ValidatorSlashingReported")(CommunityEventMessages.validator_slashing_reported)
+register_event("ValidatorExitRequest")(CommunityEventMessages.validator_exit_request)
+register_event("TriggeredExitFeeRecorded")(CommunityEventMessages.triggered_exit_fee_recorded)
+register_event("StrikesPenaltyProcessed")(CommunityEventMessages.strikes_penalty_processed)
+register_event("ValidatorWithdrawn")(CommunityEventMessages.validator_withdrawn)
+register_event("DistributionLogUpdated")(CommunityEventMessages.distribution_log_updated)
