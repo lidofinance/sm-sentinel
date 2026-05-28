@@ -19,7 +19,11 @@ The bot discovers the module type from `MODULE_ADDRESS` on startup and wires the
 For CSM, subscriptions are managed by Node Operator ID. For Curated, the bot also shows Node Operator labels from the MetaRegistry when they are available.
 
 ## Public Instances
-These bots are owned by [@skhomuti](https://t.me/skhomuti) and were created under the previous CSM Sentinel name: [Ethereum](https://t.me/CSMSentinel_bot) and [Hoodi](https://t.me/CSMSentinelHoodi_bot).
+These bots are owned by [@skhomuti](https://t.me/skhomuti):
+
+- Community Staking Module: [Ethereum](https://t.me/CSMSentinel_bot) and [Hoodi](https://t.me/CSMSentinelHoodi_bot)
+- Curated Module: [Hoodi](https://t.me/CMSentinelHoodi_bot)
+
 The [Holesky](https://t.me/CSMSentinelHolesky_bot) instance is no longer supported. 
 
 Please note that no guarantee is given for the availability of the bot.
