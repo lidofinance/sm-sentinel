@@ -43,8 +43,6 @@ But it is also possible to use a public node of any web3 providers.
 
 All other fields are pre-filled with the CSM contracts from the corresponding network. For a Curated instance, update at least `MODULE_ADDRESS` and `MODULE_UI_URL`; dependent contract addresses, module type, staking module ID, and MetaRegistry address are discovered on startup.
 
-`CSM_ADDRESS` and `CSM_UI_URL` are still accepted for backward compatibility, but new configs should use `MODULE_ADDRESS` and `MODULE_UI_URL`.
-
 Run SM Sentinel using Docker compose:
 
 ```bash

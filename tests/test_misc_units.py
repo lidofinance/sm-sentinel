@@ -98,7 +98,7 @@ def test_texts_manager_address_change_proposed_messages():
         "PROCESS_BLOCKS_REQUESTS_PER_SECOND": "3.5",
         "BLOCK_FROM": "789",
         "WEB3_SOCKET_PROVIDER": "wss://example.invalid",
-        "CSM_ADDRESS": "0x0000000000000000000000000000000000000001",
+        "MODULE_ADDRESS": "0x0000000000000000000000000000000000000001",
     },
     clear=True,
 )
@@ -123,7 +123,7 @@ def test_config_parsing_and_templates(monkeypatch, stub_discover_contract_addres
     os.environ,
     {
         "WEB3_SOCKET_PROVIDER": "wss://example.invalid",
-        "CSM_ADDRESS": "0x0000000000000000000000000000000000000001",
+        "MODULE_ADDRESS": "0x0000000000000000000000000000000000000001",
         "PROCESS_BLOCKS_REQUESTS_PER_SECOND": "2",
     },
     clear=True,
@@ -265,7 +265,7 @@ async def test_process_blocks_from_uses_event_source_filters():
     os.environ,
     {
         "WEB3_SOCKET_PROVIDER": "wss://example.invalid",
-        "CSM_ADDRESS": "0x0000000000000000000000000000000000000001",
+        "MODULE_ADDRESS": "0x0000000000000000000000000000000000000001",
     },
     clear=True,
 )
@@ -327,7 +327,7 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
     os.environ,
     {
         "WEB3_SOCKET_PROVIDER": "wss://example.invalid",
-        "CSM_ADDRESS": "0x0000000000000000000000000000000000000001",
+        "MODULE_ADDRESS": "0x0000000000000000000000000000000000000001",
     },
     clear=True,
 )
