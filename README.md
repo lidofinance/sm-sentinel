@@ -1,12 +1,13 @@
-# CSM Sentinel
+# SM Sentinel
 
-CSM Sentinel is a Telegram bot that sends notifications for Lido staking module Node Operator events.
-It supports both the Community Staking Module (CSM) and Curated Module deployments.
+SM Sentinel (Staking Modules Sentinel) is a Telegram bot that sends notifications for Lido staking module Node Operator events.
+It is designed as a multi-module watcher and currently supports both the Community Staking Module (CSM) and Curated Module deployments.
 
-This bot was developed and is maintained by [@skhomuti](https://github.com/skhomuti), a member of the Lido Protocol community, 
-to simplify the process of [subscribing to the important events for CSM](https://docs.lido.fi/staking-modules/csm/guides/events/). 
-You can either [run the bot yourself](https://github.com/skhomuti/csm-sentinel?tab=readme-ov-file#running-your-own-instance) 
-or use the [community-supported public instance](https://github.com/skhomuti/csm-sentinel?tab=readme-ov-file#public-instances), depending on your privacy preferences.
+The project was originally created as CSM Sentinel by [@skhomuti](https://github.com/skhomuti), a member of the Lido Protocol community,
+to simplify the process of [subscribing to the important events for CSM](https://docs.lido.fi/staking-modules/csm/guides/events/).
+It now lives at [lidofinance/sm-sentinel](https://github.com/lidofinance/sm-sentinel) and covers multiple Lido staking modules.
+You can either [run the bot yourself](https://github.com/lidofinance/sm-sentinel?tab=readme-ov-file#running-your-own-instance)
+or use a [community-supported public instance](https://github.com/lidofinance/sm-sentinel?tab=readme-ov-file#public-instances), depending on your privacy preferences.
 
 ## Module support
 
@@ -18,7 +19,7 @@ The bot discovers the module type from `MODULE_ADDRESS` on startup and wires the
 For CSM, subscriptions are managed by Node Operator ID. For Curated, the bot also shows Node Operator labels from the MetaRegistry when they are available.
 
 ## Public Instances
-These bots are owned by [@skhomuti](https://t.me/skhomuti): [Ethereum](https://t.me/CSMSentinel_bot) and [Hoodi](https://t.me/CSMSentinelHoodi_bot). 
+These bots are owned by [@skhomuti](https://t.me/skhomuti) and were created under the previous CSM Sentinel name: [Ethereum](https://t.me/CSMSentinel_bot) and [Hoodi](https://t.me/CSMSentinelHoodi_bot).
 The [Holesky](https://t.me/CSMSentinelHolesky_bot) instance is no longer supported. 
 
 Please note that no guarantee is given for the availability of the bot.
@@ -40,7 +41,7 @@ All other fields are pre-filled with the CSM contracts from the corresponding ne
 
 `CSM_ADDRESS` and `CSM_UI_URL` are still accepted for backward compatibility, but new configs should use `MODULE_ADDRESS` and `MODULE_UI_URL`.
 
-Run the Sentinel using Docker compose:
+Run SM Sentinel using Docker compose:
 
 ```bash
 docker compose up -d
@@ -49,10 +50,10 @@ docker compose up -d
 Or using Docker:
 
 ```bash
-docker build -t csm-sentinel .
-docker volume create csm-sentinel-persistent
+docker build -t sm-sentinel .
+docker volume create sm-sentinel-persistent
 
-docker run -d --env-file=.env --name csm-sentinel -v csm-sentinel-persistent:/app/.storage csm-sentinel
+docker run -d --env-file=.env --name sm-sentinel -v sm-sentinel-persistent:/app/.storage sm-sentinel
 ```
 
 ## Container images
@@ -60,23 +61,19 @@ docker run -d --env-file=.env --name csm-sentinel -v csm-sentinel-persistent:/ap
 Public container images are published to GitHub Container Registry for this repository:
 
 ```bash
-docker pull ghcr.io/skhomuti/csm-sentinel:latest
+docker pull ghcr.io/lidofinance/sm-sentinel:latest
 ```
 
-Image tags follow the Git ref that triggered the workflow:
+Release publishing is driven by pull request labels and a final GitHub release publication:
 
-- Pull requests build the image for validation but do not publish it
-- Each merge to `main` refreshes a draft prerelease suggestion in GitHub Releases
-- Publishing a prerelease with tag `vX.Y.ZrcN` publishes `ghcr.io/skhomuti/csm-sentinel:X.Y.ZrcN`
-- Publishing a stable release with tag `vX.Y.Z` publishes `ghcr.io/skhomuti/csm-sentinel:X.Y.Z`, `X.Y`, `X`, and `latest`
+- Label merged pull requests with `release:major`, `release:minor`, or `release:patch`.
+- Each merge to `main` prepares or refreshes a draft GitHub Release with a stable SemVer tag such as `v1.2.3`.
+- If multiple pull requests merge before publication, the pending draft release is refreshed to point at the latest merge commit and the highest required SemVer bump.
+- Review or edit the draft release notes, then use GitHub's **Publish release** button.
+- Publishing the release builds and pushes `ghcr.io/lidofinance/sm-sentinel:1.2.3`, `1.2`, `1`, and `latest`.
 
-Suggested prerelease bumps are driven by pull request labels:
-
-- `release:major` for breaking changes
-- `release:minor` for backward-compatible features
-- `release:patch` for fixes and other release-worthy changes
-
-If no `release:*` label is applied, the next draft prerelease treats the change as a patch.
+The same `release:*` labels are used for both version bump selection and generated release note categories.
+Draft releases do not publish container images; only the explicit GitHub release publication does.
 
 ## Local development
 
