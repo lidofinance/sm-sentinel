@@ -1390,6 +1390,7 @@ def test_subscription_decodes_v2_and_v3_transition_events():
         assert "Initialized" in decoded_event_names
         assert "ELRewardsStealingPenaltyReported" in decoded_event_names
         assert "ValidatorSlashingReported" in decoded_event_names
+        assert "KeyAllocatedBalanceChanged" not in decoded_event_names
     finally:
         clear_config()
 
