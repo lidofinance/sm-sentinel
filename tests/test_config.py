@@ -66,7 +66,9 @@ async def test_get_config_async_prefers_module_envs(monkeypatch, stub_discover_c
 
 
 @pytest.mark.asyncio
-async def test_get_config_async_leaves_module_ui_unset(monkeypatch, stub_discover_contract_addresses):
+async def test_get_config_async_leaves_module_ui_unset(
+    monkeypatch, stub_discover_contract_addresses
+):
     clear_config()
 
     monkeypatch.setenv("WEB3_SOCKET_PROVIDER", "wss://example.invalid/ws")
