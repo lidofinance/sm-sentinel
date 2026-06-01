@@ -106,7 +106,7 @@ jobs:
           TARGET_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           if [ -n "$MANAGED_DRAFT_TAG" ]; then
-            gh release delete "$MANAGED_DRAFT_TAG" --repo "$GH_REPO" --yes --cleanup-tag
+            gh release delete "$MANAGED_DRAFT_TAG" --repo "$GH_REPO" --yes
           fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/$SUGGESTED_TAG" >/dev/null 2>&1; then
