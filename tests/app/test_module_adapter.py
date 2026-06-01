@@ -169,6 +169,8 @@ def test_curated_module_adapter_instantiation():
     assert not hasattr(result, "csm_version")
     assert "DepositedSigningKeysCountChanged" in result.catalog_events()
     assert "OperatorGroupCreated" in result.catalog_events()
+    assert "KeyAllocatedBalanceChanged" not in result.catalog_events()
+    assert "KeyAllocatedBalanceChanged" not in result.notifiable_events()
     assert result.catalog_events() == result.notifiable_events()
     assert result.side_effect_events() == {"NodeOperatorAdded", "OperatorMetadataSet"}
 
@@ -260,10 +262,11 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
         "CustomRewardsClaimerSet",
         "FeeSplitsSet",
         "ExpiredBondLockRemoved",
-        "KeyAllocatedBalanceChanged",
     }
     assert new_v3_events.isdisjoint(adapter_v2.catalog_events())
     assert new_v3_events.issubset(adapter_v3.catalog_events())
+    assert "KeyAllocatedBalanceChanged" not in adapter_v3.catalog_events()
+    assert "KeyAllocatedBalanceChanged" not in adapter_v3.notifiable_events()
 
 
 @pytest.mark.asyncio

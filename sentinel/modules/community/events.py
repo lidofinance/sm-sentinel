@@ -4,7 +4,7 @@ from eth_utils import humanize_wei
 
 from sentinel.models import Event, EventHandler
 from sentinel.modules.base_events import BaseModule
-from sentinel.modules.community.adapter import COMMUNITY_NOTIFIABLE_EVENTS
+from sentinel.modules.community.adapter import COMMUNITY_EVENTS
 from sentinel.modules.community.texts import (
     COMMUNITY_EVENT_DESCRIPTIONS,
     COMMUNITY_EVENT_MESSAGES,
@@ -25,7 +25,7 @@ def register_event(event_name: str):
 
 
 def assert_event_mappings() -> None:
-    catalog_events = set(COMMUNITY_NOTIFIABLE_EVENTS)
+    catalog_events = set(COMMUNITY_EVENTS)
     events = set(COMMUNITY_EVENTS_TO_FOLLOW.keys())
     messages = set(COMMUNITY_EVENT_MESSAGES.keys())
     descriptions = set(COMMUNITY_EVENT_DESCRIPTIONS.keys())

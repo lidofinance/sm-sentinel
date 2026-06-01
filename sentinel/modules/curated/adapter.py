@@ -92,6 +92,12 @@ CURATED_EVENTS = frozenset(
 CURATED_FEE_DISTRIBUTOR_EVENTS = frozenset({"DistributionLogUpdated"})
 CURATED_VEBO_EVENTS = frozenset({"ValidatorExitRequest"})
 CURATED_SIDE_EFFECT_EVENTS = frozenset({"NodeOperatorAdded", "OperatorMetadataSet"})
+CURATED_TEMPORARILY_DISABLED_NOTIFIABLE_EVENTS = frozenset(
+    {
+        # TODO: re-enable after KeyAllocatedBalanceChanged notifications are batched.
+        "KeyAllocatedBalanceChanged",
+    }
+)
 
 
 class CuratedModuleAdapter(BaseModuleAdapter):
@@ -177,10 +183,10 @@ class CuratedModuleAdapter(BaseModuleAdapter):
         )
 
     def catalog_events(self) -> set[str]:
-        return set(CURATED_EVENTS)
+        return set(CURATED_EVENTS - CURATED_TEMPORARILY_DISABLED_NOTIFIABLE_EVENTS)
 
     def notifiable_events(self) -> set[str]:
-        return set(CURATED_EVENTS)
+        return set(CURATED_EVENTS - CURATED_TEMPORARILY_DISABLED_NOTIFIABLE_EVENTS)
 
     def side_effect_events(self) -> set[str]:
         return set(CURATED_SIDE_EFFECT_EVENTS)

@@ -79,9 +79,14 @@ COMMUNITY_CATALOG_EVENTS_BY_VERSION: dict[int, frozenset[str]] = {
     2: COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS,
     3: COMMUNITY_COMMON_EVENTS | COMMUNITY_V3_ONLY_EVENTS,
 }
-COMMUNITY_NOTIFIABLE_EVENTS = (
-    COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS | COMMUNITY_V3_ONLY_EVENTS
+COMMUNITY_EVENTS = COMMUNITY_COMMON_EVENTS | COMMUNITY_V2_ONLY_EVENTS | COMMUNITY_V3_ONLY_EVENTS
+COMMUNITY_TEMPORARILY_DISABLED_NOTIFIABLE_EVENTS = frozenset(
+    {
+        # TODO: re-enable after KeyAllocatedBalanceChanged notifications are batched.
+        "KeyAllocatedBalanceChanged",
+    }
 )
+COMMUNITY_NOTIFIABLE_EVENTS = COMMUNITY_EVENTS - COMMUNITY_TEMPORARILY_DISABLED_NOTIFIABLE_EVENTS
 COMMUNITY_SIDE_EFFECT_EVENTS = frozenset({"Initialized", "NodeOperatorAdded"})
 
 
@@ -166,7 +171,7 @@ class CommunityModuleAdapter(BaseModuleAdapter):
             self.csm_version,
             COMMUNITY_CATALOG_EVENTS_BY_VERSION[3],
         )
-        return set(events)
+        return set(events - COMMUNITY_TEMPORARILY_DISABLED_NOTIFIABLE_EVENTS)
 
     def notifiable_events(self) -> set[str]:
         return set(COMMUNITY_NOTIFIABLE_EVENTS)
