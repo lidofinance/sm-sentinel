@@ -88,6 +88,57 @@ def test_texts_manager_address_change_proposed_messages():
     assert "New manager address proposed" in msg_proposed
 
 
+def test_parse_distribution_log_supports_v1_v2_and_v3_report_shapes():
+    from sentinel.modules.distribution import parse_distribution_log
+
+    frame_1 = {
+        "operators": {
+            "42": {
+                "validators": {
+                    "100": {"strikes": 2},
+                    "101": {"strikes": 0},
+                }
+            }
+        }
+    }
+    frame_2 = {
+        "operators": {
+            777: {
+                "validators": {
+                    "900": {"strikes": 1},
+                }
+            }
+        }
+    }
+    frame_3 = {
+        "operators": {
+            "888": {
+                "validators": {
+                    "901": {"strikes": 3},
+                }
+            }
+        }
+    }
+
+    expected_operator_ids = {"42", "777", "888"}
+    expected_strikes = {
+        "42": [("100", 2)],
+        "777": [("900", 1)],
+        "888": [("901", 3)],
+    }
+
+    v1_summary = parse_distribution_log(frame_1)
+    v2_summary = parse_distribution_log([frame_1, frame_2, frame_3])
+    v3_summary = parse_distribution_log({"_ver": 1, "frames": [frame_1, frame_2, frame_3]})
+
+    assert v1_summary.all_operator_ids == {"42"}
+    assert v1_summary.strikes_per_operator == {"42": [("100", 2)]}
+    assert v2_summary.all_operator_ids == expected_operator_ids
+    assert v2_summary.strikes_per_operator == expected_strikes
+    assert v3_summary.all_operator_ids == expected_operator_ids
+    assert v3_summary.strikes_per_operator == expected_strikes
+
+
 @patch.dict(
     os.environ,
     {

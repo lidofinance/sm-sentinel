@@ -3,7 +3,8 @@ from dataclasses import dataclass
 
 import aiohttp
 
-DistributionLogFetcher = Callable[[str], Awaitable[dict | list]]
+DistributionLogPayload = dict | list
+DistributionLogFetcher = Callable[[str], Awaitable[DistributionLogPayload]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +30,16 @@ def validator_sort_key(validator_id: str) -> tuple[int, int | str]:
     return 1, validator_str
 
 
-def parse_distribution_log(payload: dict | list) -> DistributionStrikeSummary:
-    entries = payload if isinstance(payload, list) else [payload]
+def _distribution_log_entries(payload: DistributionLogPayload) -> list[dict]:
+    if isinstance(payload, list):
+        return payload
+    if "frames" in payload:
+        return payload["frames"]
+    return [payload]
+
+
+def parse_distribution_log(payload: DistributionLogPayload) -> DistributionStrikeSummary:
+    entries = _distribution_log_entries(payload)
     all_operator_ids: set[str] = set()
     strikes_per_operator: dict[str, list[tuple[str, int]]] = {}
 
