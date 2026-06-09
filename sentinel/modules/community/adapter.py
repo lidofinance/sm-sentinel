@@ -218,3 +218,9 @@ class CommunityModuleAdapter(BaseModuleAdapter):
         from sentinel.modules.community.events import CommunityEventMessages
 
         return CommunityEventMessages(self)
+
+    def event_aggregators(self):
+        from sentinel.modules.aggregation import node_operator_aggregators_from_event_handlers
+        from sentinel.modules.community.events import COMMUNITY_EVENTS_TO_FOLLOW
+
+        return node_operator_aggregators_from_event_handlers(COMMUNITY_EVENTS_TO_FOLLOW)

@@ -73,7 +73,7 @@ async def _exercise_curated_event(
     anvil = await anvil_launcher(fork_block)
     harness = await build_subscription(anvil.ws_url, anvil.http_url)
     try:
-        await harness.process_blocks_from(fork_block - 1, fork_block)
+        await harness.replay_blocks(fork_block - 1, fork_block)
         assert _has_expected_message(
             harness, event_name=event_name, expected_markdown=expected_markdown
         ), (
@@ -130,7 +130,7 @@ async def test_curated_process_blocks_deposited_signing_keys_count_changed(
         fork_block=2766515,
         expected_markdown=(
             "🤩 *Keys were deposited\\!*\n\n"
-            "New deposited keys count: 16\n\n"
+            "Deposited keys count: `0 \\-\\> 16`\n\n"
             "Node Operator: \\#2 \\- Develp PTO\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
@@ -206,14 +206,14 @@ async def test_curated_process_blocks_bond_curve_weight_set(anvil_launcher):
 async def test_curated_process_blocks_operator_group_created(anvil_launcher):
     await _exercise_curated_event(
         event_name="OperatorGroupCreated",
-        fork_block=2766235,
+        fork_block=2892439,
         expected_markdown=(
             "ℹ️ *Operator group created*\n\n"
-            "Group: `1`\n"
+            "Group: `19: Sigma Prime`\n"
             "Added Node Operators:\n"
-            "\\- \\#0 \\- Attestant \\(BVI\\) Limited\n"
+            "\\- \\#31 \\- Sigma Prime\n"
             "  Weighted share: 100% \\(group share: 100%\\)\n"
-            "\\- \\#1 \\- Attestant \\(BVI\\) Limited \\- IODC\n"
+            "\\- \\#45 \\- Sigma Prime\n"
             "  Weighted share: 0% \\(group share: 0%\\)\n\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
@@ -224,11 +224,11 @@ async def test_curated_process_blocks_operator_group_created(anvil_launcher):
 async def test_curated_process_blocks_operator_group_updated(anvil_launcher):
     await _exercise_curated_event(
         event_name="OperatorGroupUpdated",
-        fork_block=2805615,
+        fork_block=2892438,
         expected_markdown=None,
         expected_per_node={
-            "0": ("Weighted share: `100% \\-\\> 50%`\n\nGroup share: `100% \\-\\> 50%`"),
-            "1": ("Weighted share: `0% \\-\\> 50%`\n\nGroup share: `0% \\-\\> 50%`"),
+            "0": ("Share: `50% \\-\\> 100%`\n  Effective allocation share: `50% \\-\\> 100%`"),
+            "1": ("Share: `50% \\-\\> 0%`\n  Effective allocation share: `50% \\-\\> 0%`"),
         },
         anvil_launcher=anvil_launcher,
     )
@@ -276,7 +276,7 @@ async def test_curated_process_blocks_node_operator_manager_address_change_propo
         fork_block=2772737,
         expected_markdown=(
             "ℹ️ *New manager address proposed*\n\n"
-            "Proposed address: `0xA9113E3632FB4Fa1B5eC6b00a2bBD345BEF8b293`\n"
+            "Proposed address: `0xA9113E3632FB4Fa1B5eC6b00a2bBD345BEF8b293`\n\n"
             "To complete the change, the Node Operator must confirm it from the new address\\.\n\n"
             "Node Operator: \\#10 \\- QA Operator\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
@@ -325,7 +325,7 @@ async def test_curated_process_blocks_node_operator_reward_address_change_propos
         fork_block=2805052,
         expected_markdown=(
             "ℹ️ *New rewards address proposed*\n\n"
-            "Proposed address: `0x75Ce9d9C53f08B96D88f8FD6494d0B664be16878`\n"
+            "Proposed address: `0x75Ce9d9C53f08B96D88f8FD6494d0B664be16878`\n\n"
             "To complete the change, the Node Operator must confirm it from the new address\\.\n\n"
             "Node Operator: \\#28 \\- Stakely DVT\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"

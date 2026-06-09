@@ -11,6 +11,7 @@ from sentinel.modules.texts import BotTexts
 
 if TYPE_CHECKING:
     from sentinel.models import Event
+    from sentinel.modules.aggregation import EventAggregator
 
 EventPredicate = Callable[["Event"], bool]
 
@@ -62,6 +63,8 @@ class ModuleAdapter(Protocol):
 
     def build_event_messages(self): ...
 
+    def event_aggregators(self) -> tuple["EventAggregator", ...]: ...
+
 
 class BaseModuleAdapter:
     module_type: ClassVar[ModuleType]
@@ -102,6 +105,9 @@ class BaseModuleAdapter:
 
     def build_event_list_text(self) -> str:
         return self.texts.build_event_list_text(self.catalog_events(), self.module_ui_url)
+
+    def event_aggregators(self) -> tuple["EventAggregator", ...]:
+        return ()
 
     async def is_valid_operator_id(self, operator_id: int) -> bool:
         return 0 <= operator_id < await self.node_operators_count()

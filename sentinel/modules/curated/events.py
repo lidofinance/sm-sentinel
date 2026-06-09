@@ -6,15 +6,19 @@ from typing import TYPE_CHECKING
 from async_lru import alru_cache
 from eth_utils import humanize_wei
 
-from sentinel.models import Event, EventHandler
+from sentinel.models import Event, EventHandler, EventNotification
+from sentinel.modules.aggregation import AggregationGroups
 from sentinel.modules.base_events import BaseModule, _format_date
 from sentinel.modules.curated.adapter import CURATED_EVENTS
 from sentinel.modules.curated.texts import (
     CURATED_EVENT_DESCRIPTIONS,
     CURATED_EVENT_MESSAGES,
-    event_message_footer,
-    event_message_footer_tx_only,
-    event_message_footer_with_operator_name,
+    event_block_footer,
+    event_block_footer_tx_only,
+    event_block_footer_with_operator_name,
+    event_transaction_footer,
+    event_transaction_footer_tx_only,
+    event_transaction_footer_with_operator_name,
 )
 from sentinel.modules.distribution import (
     DistributionLogFetcher,
@@ -33,8 +37,12 @@ CURATED_EVENTS_TO_FOLLOW: dict[str, EventHandler] = {}
 logger = logging.getLogger(__name__)
 
 
-def register_event(event_name: str):
-    return RegisterEventHandler(CURATED_EVENTS_TO_FOLLOW, event_name)
+def register_event(event_name: str, aggregation_group=None):
+    return RegisterEventHandler(
+        CURATED_EVENTS_TO_FOLLOW,
+        event_name,
+        aggregation_group=aggregation_group,
+    )
 
 
 def assert_event_mappings() -> None:
@@ -99,8 +107,8 @@ class CuratedEventMessages(BaseModule):
         )
         super().__init__(module_adapter)
 
-    def reconfigure(self, module_adapter: "CuratedModuleAdapter") -> None:
-        super().reconfigure(module_adapter)
+    def _bind_module_adapter(self, module_adapter: "CuratedModuleAdapter") -> None:
+        super()._bind_module_adapter(module_adapter)
         self.meta_registry = module_adapter.contracts.meta_registry
 
     @alru_cache(maxsize=512)
@@ -112,38 +120,53 @@ class CuratedEventMessages(BaseModule):
         )
         return NodeOperatorMetadata(name=read_field(metadata, "name", 0) or None)
 
-    async def event_footer(self, event: Event) -> str:
-        tx_link = self.transaction_link(event)
-        node_operator_id = event.args.get("nodeOperatorId")
-        if node_operator_id is None:
-            return event_message_footer_tx_only(tx_link).as_markdown()
-
-        node_operator_id = int(node_operator_id)
+    async def _node_operator_metadata_or_none(
+        self, node_operator_id: int, block: int
+    ) -> NodeOperatorMetadata | None:
         try:
-            metadata = await self._fetch_node_operator_metadata(node_operator_id, event.block)
-        except Exception:
-            logger.warning(
-                "Failed to fetch Curated node operator metadata",
-                extra={"node_operator_id": node_operator_id, "block": event.block},
-                exc_info=True,
-            )
-            return event_message_footer(node_operator_id, tx_link).as_markdown()
-
-        if not metadata.name:
-            return event_message_footer(node_operator_id, tx_link).as_markdown()
-        return event_message_footer_with_operator_name(
-            node_operator_id, metadata.name, tx_link
-        ).as_markdown()
-
-    async def _node_operator_label(self, node_operator_id: int, block: int) -> str:
-        try:
-            metadata = await self._fetch_node_operator_metadata(node_operator_id, block)
+            return await self._fetch_node_operator_metadata(node_operator_id, block)
         except Exception:
             logger.warning(
                 "Failed to fetch Curated node operator metadata",
                 extra={"node_operator_id": node_operator_id, "block": block},
                 exc_info=True,
             )
+            return None
+
+    async def event_footer(self, event: Event) -> str:
+        tx_link = self.transaction_link(event)
+        node_operator_id = event.args.get("nodeOperatorId")
+        if node_operator_id is None:
+            return event_transaction_footer_tx_only(tx_link).as_markdown()
+
+        node_operator_id = int(node_operator_id)
+        metadata = await self._node_operator_metadata_or_none(node_operator_id, event.block)
+        if metadata is None or not metadata.name:
+            return event_transaction_footer(node_operator_id, tx_link).as_markdown()
+        return event_transaction_footer_with_operator_name(
+            node_operator_id, metadata.name, tx_link
+        ).as_markdown()
+
+    async def block_footer(self, event: EventNotification) -> str:
+        start_block, end_block = self.notification_block_range(event)
+        block_links = [(str(start_block), self.block_link(start_block))]
+        if end_block != start_block:
+            block_links.append((str(end_block), self.block_link(end_block)))
+        node_operator_id = event.args.get("nodeOperatorId")
+        if node_operator_id is None:
+            return event_block_footer_tx_only(block_links).as_markdown()
+
+        node_operator_id = int(node_operator_id)
+        metadata = await self._node_operator_metadata_or_none(node_operator_id, event.block)
+        if metadata is None or not metadata.name:
+            return event_block_footer(node_operator_id, block_links).as_markdown()
+        return event_block_footer_with_operator_name(
+            node_operator_id, metadata.name, block_links
+        ).as_markdown()
+
+    async def _node_operator_label(self, node_operator_id: int, block: int) -> str:
+        metadata = await self._node_operator_metadata_or_none(node_operator_id, block)
+        if metadata is None:
             return f"#{node_operator_id}"
 
         if not metadata.name:
@@ -180,6 +203,12 @@ class CuratedEventMessages(BaseModule):
             )
         ]
 
+    async def _sub_node_operator_labels(self, group_info, block: int) -> list[str]:
+        return [
+            await self._node_operator_label(int(read_field(operator, "nodeOperatorId", 0)), block)
+            for operator in _sub_node_operators(group_info)
+        ]
+
     async def _fetch_node_operator_weights(
         self, node_operator_ids: tuple[int, ...], block: int
     ) -> dict[int, int]:
@@ -194,7 +223,7 @@ class CuratedEventMessages(BaseModule):
         }
 
     @register_event("TargetValidatorsCountChanged")
-    async def target_validators_count_changed(self, event: Event):
+    async def target_validators_count_changed(self, event: EventNotification):
         node_operator = await self.module.functions.getNodeOperator(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
@@ -204,114 +233,116 @@ class CuratedEventMessages(BaseModule):
             node_operator.targetLimit,
             event.args["targetLimitMode"],
             event.args["targetValidatorsCount"],
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("ValidatorExitDelayProcessed")
-    async def validator_exit_delay_processed(self, event: Event):
+    async def validator_exit_delay_processed(self, event: EventNotification):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
         return template(
             key, key_url, humanize_wei(event.args["delayFee"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("Initialized")
-    async def initialized(self, event: Event):
+    async def initialized(self, event: EventNotification):
         if event.address.lower() != self.module_address.lower():
             return None
         template = self._require_message_template(event.event)
-        return template() + await self.event_footer(event)
+        return template() + await self.notification_footer(event)
 
     @register_event("BondDepositedETH")
-    async def bond_deposited_eth(self, event: Event):
+    async def bond_deposited_eth(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["from"], humanize_wei(event.args["amount"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondDepositedStETH")
-    async def bond_deposited_steth(self, event: Event):
+    async def bond_deposited_steth(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["from"], humanize_wei(event.args["amount"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondDepositedWstETH")
-    async def bond_deposited_wsteth(self, event: Event):
+    async def bond_deposited_wsteth(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["from"], humanize_wei(event.args["amount"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondClaimedUnstETH")
-    async def bond_claimed_unsteth(self, event: Event):
+    async def bond_claimed_unsteth(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["to"],
             humanize_wei(event.args["amount"]),
             event.args["requestId"],
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondClaimedStETH")
-    async def bond_claimed_steth(self, event: Event):
+    async def bond_claimed_steth(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["to"], humanize_wei(event.args["amount"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondClaimedWstETH")
-    async def bond_claimed_wsteth(self, event: Event):
+    async def bond_claimed_wsteth(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["to"], humanize_wei(event.args["amount"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondBurned")
-    async def bond_burned(self, event: Event):
+    async def bond_burned(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["burnedAmount"])) + await self.event_footer(event)
+        return template(humanize_wei(event.args["burnedAmount"])) + await self.notification_footer(
+            event
+        )
 
     @register_event("BondCharged")
-    async def bond_charged(self, event: Event):
+    async def bond_charged(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             humanize_wei(event.args["amountToCharge"]),
             humanize_wei(event.args["chargedAmount"]),
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondLockChanged")
-    async def bond_lock_changed(self, event: Event):
+    async def bond_lock_changed(self, event: EventNotification):
         template = self._require_message_template(event.event)
         until = datetime.datetime.fromtimestamp(event.args["until"], datetime.UTC)
         return template(
             humanize_wei(event.args["newAmount"]), _format_date(until)
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("BondLockRemoved")
-    async def bond_lock_removed(self, event: Event):
+    async def bond_lock_removed(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template() + await self.event_footer(event)
+        return template() + await self.notification_footer(event)
 
     @register_event("BondLockCompensated")
-    async def bond_lock_compensated(self, event: Event):
+    async def bond_lock_compensated(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.notification_footer(event)
 
     @register_event("BondLockPeriodChanged")
-    async def bond_lock_period_changed(self, event: Event):
+    async def bond_lock_period_changed(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             str(datetime.timedelta(seconds=event.args["period"]))
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
     @register_event("NodeOperatorEffectiveWeightChanged")
-    async def node_operator_effective_weight_changed(self, event: Event):
+    async def node_operator_effective_weight_changed(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["oldWeight"], event.args["newWeight"]) + await self.event_footer(
-            event
-        )
+        return template(
+            event.args["oldWeight"], event.args["newWeight"]
+        ) + await self.notification_footer(event)
 
     @register_event("OperatorGroupCreated")
-    async def operator_group_created(self, event: Event):
+    async def operator_group_created(self, event: EventNotification):
         template = self._require_message_template(event.event)
         group_info = event.args["groupInfo"]
         operator_ids = _sub_node_operator_ids(group_info)
@@ -321,11 +352,11 @@ class CuratedEventMessages(BaseModule):
             event.args["groupId"],
             await self._sub_node_operator_allocations(group_info, event.block),
             group_name=_operator_group_name(group_info),
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
     @register_event("OperatorGroupUpdated")
-    async def operator_group_updated(self, event: Event):
+    async def operator_group_updated(self, event: EventNotification):
         template = self._require_message_template(event.event)
         group_id = event.args["groupId"]
         previous_group = await self.meta_registry.functions.getOperatorGroup(group_id).call(
@@ -354,7 +385,7 @@ class CuratedEventMessages(BaseModule):
                 change_kind="renamed",
                 old_group_name=previous_group_name,
                 new_group_name=current_group_name,
-            ) + await self.event_footer(event)
+            ) + await self.notification_footer(event)
             return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
         previous_operators = {
@@ -368,7 +399,7 @@ class CuratedEventMessages(BaseModule):
             for operator in await self._sub_node_operator_allocations(current_group, event.block)
         }
         target_operator_ids = changed_operator_ids | (set(current_shares) if is_renamed else set())
-        footer = await self.event_footer(event)
+        footer = await self.notification_footer(event)
         plan = NotificationPlan().with_broadcast_targets(target_operator_ids)
         for node_operator_id in target_operator_ids:
             if node_operator_id not in changed_operator_ids:
@@ -416,7 +447,7 @@ class CuratedEventMessages(BaseModule):
         return plan
 
     @register_event("OperatorGroupCleared")
-    async def operator_group_cleared(self, event: Event):
+    async def operator_group_cleared(self, event: EventNotification):
         template = self._require_message_template(event.event)
         previous_group = await self.meta_registry.functions.getOperatorGroup(
             event.args["groupId"]
@@ -426,13 +457,13 @@ class CuratedEventMessages(BaseModule):
             return None
         message = template(
             event.args["groupId"],
-            await self._sub_node_operator_allocations(previous_group, event.block - 1),
+            await self._sub_node_operator_labels(previous_group, event.block - 1),
             group_name=_operator_group_name(previous_group),
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
         return NotificationPlan(broadcast=message).with_broadcast_targets(operator_ids)
 
     @register_event("BondCurveWeightSet")
-    async def bond_curve_weight_set(self, event: Event):
+    async def bond_curve_weight_set(self, event: EventNotification):
         template = self._require_message_template(event.event)
         message = template(event.args["curveId"], event.args["weight"])
         operator_ids = await self._node_operator_ids_for_bond_curve(
@@ -444,7 +475,7 @@ class CuratedEventMessages(BaseModule):
         plan = NotificationPlan()
         for node_operator_id in operator_ids:
             targeted_event = replace(
-                event, args=dict(event.args) | {"nodeOperatorId": node_operator_id}
+                event.primary_event, args=dict(event.args) | {"nodeOperatorId": node_operator_id}
             )
             plan.add_node_operator_message(
                 node_operator_id, f"{message}{await self.event_footer(targeted_event)}"
@@ -452,14 +483,14 @@ class CuratedEventMessages(BaseModule):
         return plan
 
     @register_event("OperatorMetadataSet")
-    async def operator_metadata_set(self, event: Event):
+    async def operator_metadata_set(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["metadata"]) + await self.event_footer(event)
+        return template(event.args["metadata"]) + await self.notification_footer(event)
 
-    async def distribution_log_updated(self, event: Event):
+    async def distribution_log_updated(self, event: EventNotification):
         template = self._require_message_template(event.event)
         base_message = template()
-        footer = await self.event_footer(event)
+        footer = await self.notification_footer(event)
         plan = NotificationPlan(broadcast=f"{base_message}{footer}")
 
         log_cid = event.args.get("logCid")
@@ -501,12 +532,14 @@ class CuratedEventMessages(BaseModule):
         return operator_ids
 
 
-register_event("DepositedSigningKeysCountChanged")(
-    CuratedEventMessages.deposited_signing_keys_count_changed
-)
-register_event("TotalSigningKeysCountChanged")(
-    CuratedEventMessages.total_signing_keys_count_changed
-)
+register_event(
+    "DepositedSigningKeysCountChanged",
+    aggregation_group=AggregationGroups.DEPOSITED_SIGNING_KEY_COUNTS,
+)(CuratedEventMessages.deposited_signing_keys_count_changed)
+register_event(
+    "TotalSigningKeysCountChanged",
+    aggregation_group=AggregationGroups.TOTAL_SIGNING_KEY_COUNTS,
+)(CuratedEventMessages.total_signing_keys_count_changed)
 register_event("VettedSigningKeysCountDecreased")(
     CuratedEventMessages.vetted_signing_keys_count_decreased
 )
@@ -541,7 +574,10 @@ register_event("GeneralDelayedPenaltyCompensated")(
     CuratedEventMessages.general_delayed_penalty_compensated
 )
 register_event("ValidatorSlashingReported")(CuratedEventMessages.validator_slashing_reported)
-register_event("ValidatorExitRequest")(CuratedEventMessages.validator_exit_request)
+register_event(
+    "ValidatorExitRequest",
+    aggregation_group=AggregationGroups.VALIDATOR_EXIT_REQUESTS,
+)(CuratedEventMessages.validator_exit_request)
 register_event("TriggeredExitFeeRecorded")(CuratedEventMessages.triggered_exit_fee_recorded)
 register_event("StrikesPenaltyProcessed")(CuratedEventMessages.strikes_penalty_processed)
 register_event("ValidatorWithdrawn")(CuratedEventMessages.validator_withdrawn)

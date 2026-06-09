@@ -9,6 +9,7 @@ from sentinel.app.storage import (
     normalise_node_operator_ids,
     normalise_node_operator_map,
 )
+from sentinel.modules.aggregation import AggregationWindow
 
 
 # _ensure_int_set
@@ -242,6 +243,58 @@ def test_bot_storage_migrate_chat_id_updates_chat_sets_and_targets():
     assert not storage.groups.contains(200)
     assert storage.node_operator_chats.chats_for("42") == {300}
     assert storage.node_operator_chats.ids() == {"42", "empty"}
+
+
+# AggregationWindowStore
+
+
+def test_aggregation_window_store_persists_plain_records_and_restores_pending():
+    bot_data: dict[str, object] = {}
+    storage = BotStorage(bot_data)
+    window = AggregationWindow(
+        group="total_signing_key_counts",
+        start_block=100,
+        end_block=102,
+        event_names=frozenset({"A", "B"}),
+    )
+
+    storage.aggregation_windows.upsert_pending(window)
+
+    assert bot_data["aggregation_windows"] == {
+        "total_signing_key_counts:100:102": {
+            "group": "total_signing_key_counts",
+            "start_block": 100,
+            "end_block": 102,
+            "event_names": ["A", "B"],
+            "status": "pending",
+        }
+    }
+    assert BotStorage(bot_data).aggregation_windows.pending() == [window]
+    assert storage.aggregation_windows.contains_active("total_signing_key_counts", 101)
+
+
+def test_aggregation_window_store_marks_aggregated_and_prunes_old_records():
+    bot_data: dict[str, object] = {}
+    store = BotStorage(bot_data).aggregation_windows
+    old_window = AggregationWindow(
+        group="total_signing_key_counts",
+        start_block=100,
+        end_block=100,
+        event_names=frozenset({"A"}),
+    )
+    recent_window = AggregationWindow(
+        group="total_signing_key_counts",
+        start_block=200,
+        end_block=200,
+        event_names=frozenset({"A"}),
+    )
+
+    store.mark_aggregated(old_window)
+    store.mark_aggregated(recent_window)
+    store.prune(current_block=230, retain_blocks=128)
+
+    assert not store.contains_active("total_signing_key_counts", 100)
+    assert store.contains_active("total_signing_key_counts", 200)
 
 
 # NodeOperatorSubscriptions

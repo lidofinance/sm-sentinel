@@ -1,4 +1,6 @@
+import asyncio
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 from hexbytes import HexBytes
@@ -6,12 +8,31 @@ import pytest
 
 from sentinel.app.health import HealthState
 from sentinel.app.contracts import CommunityContractAddresses
+from sentinel.app.telegram_adapters import (
+    TelegramNotificationHandler,
+    TelegramNotificationSink,
+    TelegramProcessingStateProvider,
+)
 from sentinel.chain import ConnectOnDemand
 from sentinel.config import Config, clear_config, set_config
 from sentinel.module_types import ModuleType
 from sentinel.app.storage import BotStorage
-from sentinel.models import Block, Event
-from sentinel.services.subscription import TelegramSubscription
+from sentinel.models import Block, Event, EventNotification
+from sentinel.modules.aggregation import (
+    DEPOSITED_SIGNING_KEYS_COUNT_CHANGED,
+    TOTAL_SIGNING_KEYS_COUNT_CHANGED,
+    AggregationGroup,
+    AggregationGroups,
+    NodeOperatorEventAggregator,
+    OperatorGroupChangeAggregator,
+)
+from sentinel.services.aggregation import AggregationCoordinator
+from sentinel.services.subscription import (
+    CsmVersionUpgradeRequired,
+    ModuleRuntime,
+    ModuleRuntimeSupervisor,
+)
+from sentinel.rpc import Subscription
 
 
 class _FakeEth:
@@ -23,22 +44,41 @@ class _FakeW3:
     eth = _FakeEth()
 
 
+class _FakeProvider:
+    is_connected = AsyncMock(return_value=True)
+    connect = AsyncMock()
+
+
+class _FakeRawW3:
+    provider = _FakeProvider()
+    eth = _FakeEth()
+
+
+class _FakeModuleAdapter:
+    def event_sources(self):
+        return ()
+
+    def notifiable_events(self):
+        return set()
+
+    def side_effect_events(self):
+        return set()
+
+    def topic_abis(self):
+        return ()
+
+
 class _FakeEventMessages:
     def __init__(self):
         self.cfg = None
         self.module_adapter = None
-
-    def reconfigure(self, module_adapter):
-        self.module_adapter = module_adapter
+        self.event_handlers = {}
 
 
 class _FakeEventSideEffects:
     def __init__(self):
         self.module_adapter = None
         self.process_event = AsyncMock()
-
-    def reconfigure(self, module_adapter):
-        self.module_adapter = module_adapter
 
 
 def _make_config(csm_version: int) -> Config:
@@ -78,6 +118,8 @@ def _make_event(block: int) -> Event:
         block=block,
         tx=HexBytes("0xdeadbeef"),
         address="0x0000000000000000000000000000000000000000",
+        log_index=0,
+        transaction_index=0,
     )
 
 
@@ -88,6 +130,55 @@ def _make_initialized_event(block: int = 1) -> Event:
         block=block,
         tx=HexBytes("0xdeadbeef"),
         address="0x0000000000000000000000000000000000000000",
+        log_index=0,
+        transaction_index=0,
+    )
+
+
+def _make_signing_keys_event(
+    *,
+    event_name: str = "TotalSigningKeysCountChanged",
+    node_operator_id: int = 1,
+    count: int,
+    block: int = 123,
+    tx: str = "0xdeadbeef",
+    log_index: int,
+) -> Event:
+    count_arg = (
+        {"totalKeysCount": count}
+        if event_name == "TotalSigningKeysCountChanged"
+        else {"depositedKeysCount": count}
+    )
+    return Event(
+        event=event_name,
+        args={"nodeOperatorId": node_operator_id} | count_arg,
+        block=block,
+        tx=HexBytes(tx),
+        address="0x0000000000000000000000000000000000000000",
+        log_index=log_index,
+        transaction_index=0,
+    )
+
+
+def _make_operator_group_event(
+    event_name: str,
+    *,
+    group_id: int = 7,
+    block: int = 123,
+    log_index: int,
+    group_info: dict | None = None,
+) -> Event:
+    args = {"groupId": group_id}
+    if group_info is not None:
+        args["groupInfo"] = group_info
+    return Event(
+        event=event_name,
+        args=args,
+        block=block,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000000",
+        log_index=log_index,
+        transaction_index=0,
     )
 
 
@@ -96,17 +187,740 @@ def _make_context(block: int) -> SimpleNamespace:
     return SimpleNamespace(bot_storage=bot_storage, bot=AsyncMock())
 
 
-def _make_subscription(event_messages_return=None) -> TelegramSubscription:
-    sub = TelegramSubscription.__new__(TelegramSubscription)
-    sub.event_messages = SimpleNamespace(
+def _make_notification_handler(event_messages_return=None) -> TelegramNotificationHandler:
+    event_messages = SimpleNamespace(
         get_notification_plan=AsyncMock(return_value=event_messages_return),
     )
-    sub.event_side_effects = SimpleNamespace(process_event=AsyncMock())
-    return sub
+    return TelegramNotificationHandler(
+        SimpleNamespace(),
+        lambda: event_messages,
+    )
+
+
+def _make_raw_subscription() -> Subscription:
+    set_config(_make_config(csm_version=2))
+    return Subscription(
+        _FakeRawW3(),
+        health=HealthState(),
+        module_adapter=_FakeModuleAdapter(),
+    )
+
+
+class _FakeSubscriptionStorage:
+    def __init__(self, bot_data: dict) -> None:
+        self.bot_data = bot_data
+
+    @property
+    def state(self) -> BotStorage:
+        return BotStorage(self.bot_data)
+
+
+class _FakeEventHistory:
+    def __init__(self, events: list[Event] | None = None) -> None:
+        self.fetch_events = AsyncMock(return_value=events if events is not None else [])
+
+
+async def _wait_for(predicate, *, timeout: float = 1.0, interval: float = 0.01) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("Timed out waiting for condition")
+        await asyncio.sleep(interval)
+
+
+class _FakeBlockReader:
+    def __init__(self, current_block: int) -> None:
+        self.get_block_number = AsyncMock(return_value=current_block)
+
+
+class _FakeNotificationSink:
+    def __init__(self) -> None:
+        self.emit = AsyncMock()
+
+
+def _make_event_messages(
+    aggregation_group: AggregationGroup | None = None,
+    *,
+    event_names: frozenset[str] = frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        event_handlers={
+            event_name: SimpleNamespace(
+                event=event_name,
+                aggregation_group=aggregation_group,
+            )
+            for event_name in event_names
+        }
+    )
+
+
+def _make_processing_harness(
+    *,
+    aggregation_group: AggregationGroup | None = None,
+    event_names: frozenset[str] = frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+    block_events: list[Event] | None = None,
+    bot_data: dict | None = None,
+    current_block: int = 123,
+    poll_interval_seconds: float = 12.0,
+) -> SimpleNamespace:
+    storage = _FakeSubscriptionStorage(bot_data if bot_data is not None else {})
+    history = _FakeEventHistory(block_events)
+    block_reader = _FakeBlockReader(current_block)
+    sink = _FakeNotificationSink()
+    aggregation = AggregationCoordinator(
+        storage=storage,
+        event_history=history,
+        block_reader=block_reader,
+        notification_sink=sink,
+        aggregators=(
+            (
+                NodeOperatorEventAggregator(
+                    group=aggregation_group,
+                    event_names=event_names,
+                ),
+            )
+            if aggregation_group is not None
+            else ()
+        ),
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    side_effects = _FakeEventSideEffects()
+    runtime = ModuleRuntime(
+        module_adapter=cast(object, SimpleNamespace()),
+        raw_subscription=cast(Subscription, SimpleNamespace()),
+        storage=storage,
+        event_messages=_make_event_messages(aggregation_group, event_names=event_names),
+        event_side_effects=side_effects,
+        aggregation=aggregation,
+    )
+    return SimpleNamespace(
+        storage=storage,
+        history=history,
+        block_reader=block_reader,
+        sink=sink,
+        side_effects=side_effects,
+        aggregation=aggregation,
+        runtime=runtime,
+    )
 
 
 @pytest.mark.asyncio
-async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
+async def test_csm_upgrade_rebuilds_module_runtime_and_rewinds_checkpoint():
+    from sentinel.app.module_adapter import build_module_adapter_from_config
+
+    cfg = _make_config(csm_version=2)
+    cfg_v3 = _make_config(csm_version=3)
+    w3 = _FakeW3()
+    set_config(cfg)
+    try:
+        chain = ConnectOnDemand(w3)
+        module_adapter = build_module_adapter_from_config(cfg, w3, chain)
+        application = SimpleNamespace(bot_data={}, update_queue=SimpleNamespace(put=AsyncMock()))
+
+        subscription = ModuleRuntimeSupervisor(
+            w3,
+            config=cfg,
+            chain=chain,
+            health=HealthState(),
+            module_adapter=module_adapter,
+            storage=TelegramProcessingStateProvider(application),
+            notification_sink=TelegramNotificationSink(application),
+        )
+        original_raw_subscription = subscription.raw_subscription
+        original_event_messages = subscription.event_messages
+
+        from unittest.mock import patch
+
+        with patch(
+            "sentinel.services.subscription.discover_contract_addresses",
+            AsyncMock(return_value=cfg_v3.contract_addresses),
+        ):
+            replay_start_block = await subscription._handle_module_upgrade(
+                CsmVersionUpgradeRequired(block=123, version=3),
+            )
+
+        assert replay_start_block == 123
+        assert application.bot_data["block"] == 122
+        assert subscription.cfg.contract_addresses.csm_version == 3
+        assert subscription.raw_subscription is not original_raw_subscription
+        assert subscription.event_messages is not original_event_messages
+        assert subscription.event_messages.cfg.contract_addresses.csm_version == 3
+        assert (
+            subscription.event_messages.module_adapter is subscription.module_runtime.module_adapter
+        )
+        assert "Initialized" in subscription.module_runtime.module_adapter.catalog_events()
+        assert (
+            "ValidatorSlashingReported"
+            in subscription.module_runtime.module_adapter.catalog_events()
+        )
+        assert (
+            "ELRewardsStealingPenaltyReported"
+            not in subscription.module_runtime.module_adapter.catalog_events()
+        )
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_module_runtime_interrupts_v2_upgrade_before_side_effects_and_notifications():
+    from sentinel.app.module_adapter import build_module_adapter_from_config
+
+    cfg = _make_config(csm_version=2)
+    w3 = _FakeW3()
+    set_config(cfg)
+    try:
+        module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
+        harness = _make_processing_harness(aggregation_group=None, event_names=frozenset())
+        runtime = ModuleRuntime(
+            module_adapter=module_adapter,
+            raw_subscription=cast(Subscription, SimpleNamespace()),
+            storage=harness.storage,
+            event_messages=harness.runtime.event_messages,
+            event_side_effects=harness.side_effects,
+            aggregation=harness.aggregation,
+        )
+        event = Event(
+            event="Initialized",
+            args={"version": 3},
+            block=123,
+            tx=HexBytes("0xdeadbeef"),
+            address=cfg.contract_addresses.module,
+            log_index=0,
+            transaction_index=0,
+        )
+
+        with pytest.raises(CsmVersionUpgradeRequired) as exc_info:
+            await runtime.handle_event(event)
+
+        assert exc_info.value.block == 123
+        assert exc_info.value.version == 3
+        harness.side_effects.process_event.assert_not_awaited()
+        harness.sink.emit.assert_not_awaited()
+        assert harness.storage.state.block.value == 0
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_module_runtime_dispatches_side_effects_before_notification_sink():
+    harness = _make_processing_harness(aggregation_group=None, event_names=frozenset())
+    calls = []
+    harness.side_effects.process_event.side_effect = lambda event: calls.append("side_effects")
+    harness.sink.emit.side_effect = lambda event: calls.append("notification")
+
+    await harness.runtime.handle_event(_make_event(block=1))
+
+    assert calls == ["side_effects", "notification"]
+
+
+@pytest.mark.asyncio
+async def test_module_runtime_queues_non_aggregated_event_notification():
+    harness = _make_processing_harness(aggregation_group=None, event_names=frozenset())
+    event = _make_initialized_event()
+
+    await harness.runtime.handle_event(event)
+
+    harness.sink.emit.assert_awaited_once()
+    emitted = harness.sink.emit.await_args.args[0]
+    assert isinstance(emitted, EventNotification)
+    assert emitted.source_events == (event,)
+
+
+@pytest.mark.asyncio
+async def test_subscription_catchup_suppresses_duplicate_live_events_only():
+    try:
+        subscription = _make_raw_subscription()
+        consumer = SimpleNamespace(handle_event=AsyncMock())
+        subscription.add_event_consumer(consumer)
+
+        subscription._ignore_subscription_events_until_block = 100
+
+        await subscription._emit_subscription_event(_make_event(block=99))
+        consumer.handle_event.assert_not_awaited()
+
+        await subscription._emit_event(_make_event(block=99))
+        consumer.handle_event.assert_awaited_once()
+
+        subscription._ignore_subscription_events_until_block = 98
+        await subscription._emit_subscription_event(_make_event(block=100))
+
+        assert consumer.handle_event.await_count == 2
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_replay_blocks_flushes_buffered_live_events_after_replayed_events():
+    try:
+        subscription = _make_raw_subscription()
+        calls: list[tuple[str, int]] = []
+        event_consumer = SimpleNamespace(
+            handle_event=AsyncMock(side_effect=lambda event: calls.append(("event", event.block)))
+        )
+        block_consumer = SimpleNamespace(
+            handle_block=AsyncMock(side_effect=lambda block: calls.append(("block", block.number)))
+        )
+        subscription.add_event_consumer(event_consumer)
+        subscription.add_block_consumer(block_consumer)
+
+        replayed_event = _make_event(block=100)
+        live_event = _make_event(block=101)
+
+        class FakeEventLogReader:
+            async def connected_w3(self):
+                return SimpleNamespace(
+                    eth=SimpleNamespace(get_block_number=AsyncMock(return_value=100))
+                )
+
+            async def fetch_events(self, *, start_block: int, end_block: int):
+                assert (start_block, end_block) == (100, 100)
+                await subscription._emit_subscription_event(live_event)
+                return [replayed_event]
+
+        subscription._event_log_reader = FakeEventLogReader()
+
+        await subscription.replay_blocks(100, 100, suppress_live_events_until=100)
+
+        assert calls == [("event", 100), ("block", 100), ("event", 101)]
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_replay_blocks_keeps_suppressing_delayed_live_duplicates():
+    try:
+        subscription = _make_raw_subscription()
+        consumer = SimpleNamespace(handle_event=AsyncMock())
+        subscription.add_event_consumer(consumer)
+
+        class FakeEventLogReader:
+            async def connected_w3(self):
+                return SimpleNamespace(
+                    eth=SimpleNamespace(get_block_number=AsyncMock(return_value=100))
+                )
+
+            async def fetch_events(self, *, start_block: int, end_block: int):
+                return []
+
+        subscription._event_log_reader = FakeEventLogReader()
+
+        await subscription.replay_blocks(100, 100, suppress_live_events_until=100)
+        await subscription._emit_subscription_event(_make_event(block=100))
+        await subscription._emit_subscription_event(_make_event(block=101))
+
+        consumer.handle_event.assert_awaited_once()
+        assert consumer.handle_event.await_args.args[0].block == 101
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_replay_blocks_discards_buffered_live_events_when_upgrade_interrupts():
+    try:
+        subscription = _make_raw_subscription()
+        consumer = SimpleNamespace(handle_event=AsyncMock())
+        subscription.add_event_consumer(consumer)
+        live_event = _make_event(block=101)
+
+        class FakeEventLogReader:
+            async def connected_w3(self):
+                return SimpleNamespace(
+                    eth=SimpleNamespace(get_block_number=AsyncMock(return_value=100))
+                )
+
+            async def fetch_events(self, *, start_block: int, end_block: int):
+                assert (start_block, end_block) == (100, 100)
+                await subscription._emit_subscription_event(live_event)
+                raise CsmVersionUpgradeRequired(block=100, version=3)
+
+        subscription._event_log_reader = FakeEventLogReader()
+
+        with pytest.raises(CsmVersionUpgradeRequired):
+            await subscription.replay_blocks(100, 100, suppress_live_events_until=100)
+
+        consumer.handle_event.assert_not_awaited()
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_subscription_fans_out_events_and_blocks_to_all_consumers():
+    try:
+        subscription = _make_raw_subscription()
+        event_consumer_1 = SimpleNamespace(handle_event=AsyncMock())
+        event_consumer_2 = SimpleNamespace(handle_event=AsyncMock())
+        block_consumer_1 = SimpleNamespace(handle_block=AsyncMock())
+        block_consumer_2 = SimpleNamespace(handle_block=AsyncMock())
+        subscription.add_event_consumer(event_consumer_1)
+        subscription.add_event_consumer(event_consumer_2)
+        subscription.add_block_consumer(block_consumer_1)
+        subscription.add_block_consumer(block_consumer_2)
+        event = _make_event(block=123)
+        block = Block(number=123)
+
+        await subscription._emit_event(event)
+        await subscription._emit_block(block)
+
+        event_consumer_1.handle_event.assert_awaited_once_with(event)
+        event_consumer_2.handle_event.assert_awaited_once_with(event)
+        block_consumer_1.handle_block.assert_awaited_once_with(block)
+        block_consumer_2.handle_block.assert_awaited_once_with(block)
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_subscription_add_remove_consumers_updates_fanout_registry():
+    try:
+        subscription = _make_raw_subscription()
+        consumer = SimpleNamespace(handle_event=AsyncMock())
+
+        subscription.add_event_consumer(consumer)
+        subscription.add_event_consumer(consumer)
+        await subscription._emit_event(_make_event(block=1))
+
+        consumer.handle_event.assert_awaited_once()
+
+        subscription.remove_event_consumer(consumer)
+        subscription.remove_event_consumer(consumer)
+        await subscription._emit_event(_make_event(block=2))
+
+        consumer.handle_event.assert_awaited_once()
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_subscription_shutdown_suppresses_event_and_block_delivery():
+    try:
+        subscription = _make_raw_subscription()
+        event_consumer = SimpleNamespace(handle_event=AsyncMock())
+        block_consumer = SimpleNamespace(handle_block=AsyncMock())
+        subscription.add_event_consumer(event_consumer)
+        subscription.add_block_consumer(block_consumer)
+
+        subscription.request_shutdown()
+        await subscription._emit_subscription_event(_make_event(block=1))
+        await subscription._emit_event(_make_event(block=2))
+        await subscription._emit_block(Block(number=2))
+
+        event_consumer.handle_event.assert_not_awaited()
+        block_consumer.handle_block.assert_not_awaited()
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_subscription_stop_is_idempotent_for_concurrent_shutdowns():
+    try:
+        subscription = _make_raw_subscription()
+        unsubscribe_all = AsyncMock()
+        subscription._w3.subscription_manager = SimpleNamespace(  # noqa: SLF001
+            unsubscribe_all=unsubscribe_all,
+        )
+
+        await asyncio.gather(subscription.stop(), subscription.stop())
+
+        unsubscribe_all.assert_awaited_once()
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_subscription_stop_tolerates_already_detached_web3_subscription():
+    try:
+        subscription = _make_raw_subscription()
+        unsubscribe_all = AsyncMock(side_effect=ValueError("list.remove(x): x not in list"))
+        subscription._w3.subscription_manager = SimpleNamespace(  # noqa: SLF001
+            unsubscribe_all=unsubscribe_all,
+        )
+
+        await subscription.stop()
+        await subscription.stop()
+
+        unsubscribe_all.assert_awaited_once()
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_total_signing_key_count_events_are_aggregated_once_per_block():
+    block_events = [
+        _make_signing_keys_event(count=1, log_index=1),
+        _make_signing_keys_event(count=3, tx="0xfeedbeef", log_index=3),
+        _make_signing_keys_event(
+            node_operator_id=2,
+            count=4,
+            log_index=4,
+        ),
+    ]
+    harness = _make_processing_harness(
+        aggregation_group=AggregationGroups.TOTAL_SIGNING_KEY_COUNTS,
+        block_events=block_events,
+    )
+
+    await harness.runtime.handle_event(block_events[0])
+
+    harness.history.fetch_events.assert_awaited_once_with(123, 123)
+    prepared = [call.args[0] for call in harness.sink.emit.await_args_list]
+    assert len(prepared) == 2
+    assert all(isinstance(event, EventNotification) for event in prepared)
+    prepared_by_key = {(event.event, event.args["nodeOperatorId"]): event for event in prepared}
+    assert prepared_by_key[("TotalSigningKeysCountChanged", 1)].args == {
+        "nodeOperatorId": 1,
+        "totalKeysCount": 3,
+    }
+    assert prepared_by_key[("TotalSigningKeysCountChanged", 1)].source_events == (
+        block_events[0],
+        block_events[1],
+    )
+    assert prepared_by_key[("TotalSigningKeysCountChanged", 2)].args == {
+        "nodeOperatorId": 2,
+        "totalKeysCount": 4,
+    }
+    assert harness.storage.state.block.value == 123
+
+
+@pytest.mark.asyncio
+async def test_deposited_signing_key_count_events_are_aggregated_separately():
+    block_events = [
+        _make_signing_keys_event(
+            event_name="DepositedSigningKeysCountChanged",
+            count=1,
+            log_index=1,
+        ),
+        _make_signing_keys_event(
+            event_name="DepositedSigningKeysCountChanged",
+            count=2,
+            tx="0xfeedbeef",
+            log_index=2,
+        ),
+    ]
+    harness = _make_processing_harness(
+        aggregation_group=AggregationGroups.DEPOSITED_SIGNING_KEY_COUNTS,
+        event_names=frozenset({DEPOSITED_SIGNING_KEYS_COUNT_CHANGED}),
+        block_events=block_events,
+    )
+
+    await harness.aggregation.handle_event(block_events[0])
+
+    harness.history.fetch_events.assert_awaited_once_with(123, 123)
+    prepared = [call.args[0] for call in harness.sink.emit.await_args_list]
+    assert len(prepared) == 1
+    assert prepared[0].event == "DepositedSigningKeysCountChanged"
+    assert prepared[0].args == {"nodeOperatorId": 1, "depositedKeysCount": 2}
+    assert prepared[0].source_events == tuple(block_events)
+
+
+def test_operator_group_aggregator_passes_through_supporting_events_without_group_changes():
+    events = [
+        _make_operator_group_event(
+            "NodeOperatorEffectiveWeightChanged",
+            log_index=1,
+            group_info=None,
+        ),
+        _make_operator_group_event(
+            "BondCurveWeightSet",
+            log_index=2,
+            group_info=None,
+        ),
+    ]
+
+    notifications = OperatorGroupChangeAggregator().aggregate(events)
+
+    assert [notification.source_events for notification in notifications] == [
+        (events[0],),
+        (events[1],),
+    ]
+
+
+def test_operator_group_aggregator_collapses_clear_and_create_into_update_diff():
+    recreated_group = {
+        "name": "New Group",
+        "subNodeOperators": [
+            {"nodeOperatorId": 10, "share": 10_000},
+        ],
+    }
+    events = [
+        _make_operator_group_event("OperatorGroupCleared", group_id=7, log_index=1),
+        Event(
+            "NodeOperatorEffectiveWeightChanged",
+            args={"nodeOperatorId": 10, "oldWeight": 1, "newWeight": 2},
+            block=123,
+            tx=HexBytes("0xdeadbeef"),
+            address="0x0000000000000000000000000000000000000000",
+            log_index=2,
+            transaction_index=0,
+        ),
+        _make_operator_group_event(
+            "OperatorGroupCreated",
+            group_id=7,
+            group_info=recreated_group,
+            log_index=3,
+        ),
+    ]
+
+    notifications = OperatorGroupChangeAggregator().aggregate(events)
+
+    assert len(notifications) == 1
+    assert notifications[0].event == "OperatorGroupUpdated"
+    assert notifications[0].args == {
+        "groupId": 7,
+        "groupInfo": recreated_group,
+    }
+
+
+def test_operator_group_aggregator_keeps_unrelated_supporting_events_in_group_block():
+    recreated_group = {
+        "name": "New Group",
+        "subNodeOperators": [
+            {"nodeOperatorId": 10, "share": 10_000},
+        ],
+    }
+    events = [
+        _make_operator_group_event(
+            "OperatorGroupUpdated",
+            group_id=7,
+            group_info=recreated_group,
+            log_index=1,
+        ),
+        _make_operator_group_event(
+            "BondCurveWeightSet",
+            group_id=0,
+            log_index=2,
+        ),
+        Event(
+            event="NodeOperatorEffectiveWeightChanged",
+            args={"nodeOperatorId": 99, "oldWeight": 1, "newWeight": 2},
+            block=123,
+            tx=HexBytes("0xdeadbeef"),
+            address="0x0000000000000000000000000000000000000000",
+            log_index=3,
+            transaction_index=0,
+        ),
+    ]
+
+    notifications = OperatorGroupChangeAggregator().aggregate(events)
+
+    assert [notification.event for notification in notifications] == [
+        "OperatorGroupUpdated",
+        "BondCurveWeightSet",
+        "NodeOperatorEffectiveWeightChanged",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_aggregation_window_is_not_marked_aggregated_when_emit_fails():
+    block_events = [
+        _make_signing_keys_event(count=1, log_index=1),
+        _make_signing_keys_event(count=2, log_index=2),
+    ]
+    bot_data = {}
+    harness = _make_processing_harness(
+        aggregation_group=AggregationGroups.TOTAL_SIGNING_KEY_COUNTS,
+        bot_data=bot_data,
+        block_events=block_events,
+    )
+    harness.sink.emit.side_effect = RuntimeError("queue unavailable")
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        await harness.runtime.handle_event(block_events[0])
+
+    window = NodeOperatorEventAggregator(
+        group=AggregationGroups.TOTAL_SIGNING_KEY_COUNTS,
+        event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+    ).window_for(123)
+    store = BotStorage(bot_data).aggregation_windows
+    assert store.pending() == [window]
+    assert {record["status"] for record in bot_data["aggregation_windows"].values()} == {"pending"}
+
+
+@pytest.mark.asyncio
+async def test_signing_key_count_raw_event_is_suppressed_after_block_aggregation():
+    bot_data = {}
+    BotStorage(bot_data).aggregation_windows.mark_aggregated(
+        NodeOperatorEventAggregator(
+            group=AggregationGroups.TOTAL_SIGNING_KEY_COUNTS,
+            event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+        ).window_for(123)
+    )
+    harness = _make_processing_harness(
+        aggregation_group=AggregationGroups.TOTAL_SIGNING_KEY_COUNTS,
+        bot_data=bot_data,
+    )
+    event = _make_signing_keys_event(count=1, log_index=1)
+
+    await harness.aggregation.handle_event(event)
+
+    harness.sink.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_multi_block_aggregation_window_schedules_lazy_flush():
+    aggregation_group = AggregationGroup(
+        name="total_signing_key_counts",
+        window_blocks=3,
+    )
+    aggregator = NodeOperatorEventAggregator(
+        group=aggregation_group,
+        event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+    )
+    event = _make_signing_keys_event(count=1, block=100, log_index=1)
+    later_event = _make_signing_keys_event(count=2, block=101, log_index=2)
+    harness = _make_processing_harness(
+        aggregation_group=aggregation_group,
+        event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+        current_block=100,
+    )
+
+    await harness.aggregation.handle_event(event)
+    await harness.aggregation.handle_event(later_event)
+
+    harness.sink.emit.assert_not_awaited()
+    assert harness.storage.state.aggregation_windows.pending() == [aggregator.window_for(100)]
+    await harness.aggregation.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_aggregation_window_resumes_from_persisted_state():
+    aggregation_group = AggregationGroup(
+        name="total_signing_key_counts",
+        window_blocks=3,
+    )
+    aggregator = NodeOperatorEventAggregator(
+        group=aggregation_group,
+        event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+    )
+    window = aggregator.window_for(100)
+    bot_data = {}
+    store = BotStorage(bot_data).aggregation_windows
+    store.upsert_pending(window)
+    block_events = [
+        _make_signing_keys_event(count=1, block=100, log_index=1),
+        _make_signing_keys_event(count=2, block=102, log_index=2),
+    ]
+    harness = _make_processing_harness(
+        aggregation_group=aggregation_group,
+        event_names=aggregator.event_names,
+        bot_data=bot_data,
+        block_events=block_events,
+        current_block=102,
+        poll_interval_seconds=0,
+    )
+
+    harness.aggregation.resume_pending()
+    await _wait_for(lambda: not store.pending())
+
+    assert store.pending() == []
+    assert store.contains_active("total_signing_key_counts", 100)
+    harness.sink.emit.assert_awaited_once()
+    emitted = harness.sink.emit.await_args.args[0]
+    assert isinstance(emitted, EventNotification)
+    assert emitted.source_events == tuple(block_events)
+
+
+@pytest.mark.asyncio
+async def test_pending_aggregation_uses_replaced_application_bot_data():
     from sentinel.app.module_adapter import build_module_adapter_from_config
 
     cfg = _make_config(csm_version=2)
@@ -115,103 +929,129 @@ async def test_handle_csm_version_changed_rebinds_runtime_adapter_and_events():
     try:
         chain = ConnectOnDemand(w3)
         module_adapter = build_module_adapter_from_config(cfg, w3, chain)
-        application = SimpleNamespace()
-        runtime = SimpleNamespace(config=cfg, module_adapter=module_adapter, chain=chain)
-        setattr(application, "_module_runtime", runtime)
-
-        event_messages = _FakeEventMessages()
-        event_side_effects = _FakeEventSideEffects()
-        subscription = TelegramSubscription(
+        aggregation_group = AggregationGroup(
+            name="total_signing_key_counts",
+            window_blocks=3,
+        )
+        module_adapter.event_aggregators = lambda: (
+            NodeOperatorEventAggregator(
+                group=aggregation_group,
+                event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+            ),
+        )
+        initial_bot_data = {}
+        application = SimpleNamespace(
+            bot_data=initial_bot_data,
+            update_queue=SimpleNamespace(put=AsyncMock()),
+        )
+        subscription = ModuleRuntimeSupervisor(
             w3,
-            application,
-            event_messages,
-            event_side_effects,
+            config=cfg,
+            chain=chain,
             health=HealthState(),
             module_adapter=module_adapter,
+            storage=TelegramProcessingStateProvider(application),
+            notification_sink=TelegramNotificationSink(application),
         )
 
-        await subscription.handle_csm_version_changed(3)
+        persisted_bot_data = {}
+        application.bot_data = persisted_bot_data
+        aggregator = NodeOperatorEventAggregator(
+            group=aggregation_group,
+            event_names=frozenset({TOTAL_SIGNING_KEYS_COUNT_CHANGED}),
+        )
+        window = aggregator.window_for(100)
+        store = BotStorage(persisted_bot_data).aggregation_windows
+        store.upsert_pending(window)
+        block_events = [
+            _make_signing_keys_event(count=1, block=100, log_index=1),
+            _make_signing_keys_event(count=2, block=102, log_index=2),
+        ]
+        from unittest.mock import patch
 
-        assert runtime.config.contract_addresses.csm_version == 3
-        assert runtime.module_adapter.csm_version == 3
-        assert subscription.cfg.contract_addresses.csm_version == 3
-        assert event_messages.cfg.contract_addresses.csm_version == 3
-        assert event_messages.module_adapter is runtime.module_adapter
-        assert event_side_effects.module_adapter is runtime.module_adapter
-        assert "Initialized" in runtime.module_adapter.catalog_events()
-        assert "ValidatorSlashingReported" in runtime.module_adapter.catalog_events()
-        assert "ELRewardsStealingPenaltyReported" not in runtime.module_adapter.catalog_events()
+        fetch_events = AsyncMock(return_value=block_events)
+        subscription.raw_subscription.get_block_number = AsyncMock(return_value=102)
+
+        with patch("sentinel.web3_event_log_reader.Web3EventLogReader.fetch_events", fetch_events):
+            subscription.module_runtime.resume_pending_aggregations()
+            await _wait_for(lambda: not store.pending())
+
+        assert store.pending() == []
+        assert "aggregation_windows" not in initial_bot_data
+        application.update_queue.put.assert_awaited_once()
     finally:
         clear_config()
 
 
 @pytest.mark.asyncio
-async def test_initialized_event_prepares_runtime_before_queueing_subscription_event():
-    sub = TelegramSubscription.__new__(TelegramSubscription)
-    sub.event_messages = SimpleNamespace(get_notification_plan=AsyncMock(return_value=None))
-    sub.event_side_effects = SimpleNamespace(process_event=AsyncMock())
-    sub.application = SimpleNamespace(update_queue=SimpleNamespace(put=AsyncMock()))
-    sub._ignore_subscription_events_until_block = None
+async def test_process_event_log_advances_persisted_block():
+    harness = _make_processing_harness(
+        aggregation_group=None,
+        event_names=frozenset(),
+        bot_data={"block": 100},
+    )
 
-    event = _make_initialized_event()
+    await harness.runtime.handle_event(_make_event(block=200))
 
-    await sub.process_event_log_from_subscription(event)
-
-    sub.event_side_effects.process_event.assert_awaited_once_with(event)
-    sub.event_messages.get_notification_plan.assert_not_called()
-    sub.application.update_queue.put.assert_awaited_once_with(event)
+    assert harness.storage.state.block.value == 200
 
 
 @pytest.mark.asyncio
-async def test_handle_event_log_advances_persisted_block():
-    sub = _make_subscription(event_messages_return=None)
+async def test_handle_event_log_does_not_advance_persisted_block():
+    sub = _make_notification_handler(event_messages_return=None)
     context = _make_context(block=100)
 
-    await sub.handle_event_log(_make_event(block=200), context)
+    await sub.handle_event_log(EventNotification.from_event(_make_event(block=200)), context)
 
-    assert context.bot_storage.block.value == 200
+    assert context.bot_storage.block.value == 100
 
 
 @pytest.mark.asyncio
 async def test_handle_event_log_does_not_regress_persisted_block():
-    sub = _make_subscription(event_messages_return=None)
+    sub = _make_notification_handler(event_messages_return=None)
     context = _make_context(block=500)
 
-    await sub.handle_event_log(_make_event(block=300), context)
+    await sub.handle_event_log(EventNotification.from_event(_make_event(block=300)), context)
 
     assert context.bot_storage.block.value == 500
 
 
 @pytest.mark.asyncio
-async def test_handle_event_log_advances_block_with_notification_plan():
+async def test_handle_event_log_does_not_advance_block_with_notification_plan():
     plan = SimpleNamespace(
         per_node_operator={},
         broadcast=None,
         broadcast_node_operator_ids=None,
     )
-    sub = _make_subscription(event_messages_return=plan)
+    sub = _make_notification_handler(event_messages_return=plan)
     context = _make_context(block=100)
 
-    await sub.handle_event_log(_make_event(block=200), context)
+    await sub.handle_event_log(EventNotification.from_event(_make_event(block=200)), context)
 
-    assert context.bot_storage.block.value == 200
+    assert context.bot_storage.block.value == 100
 
 
 @pytest.mark.asyncio
 async def test_process_new_block_advances_persisted_block():
-    sub = TelegramSubscription.__new__(TelegramSubscription)
-    sub.application = SimpleNamespace(bot_data={"block": 100})
+    harness = _make_processing_harness(
+        aggregation_group=None,
+        event_names=frozenset(),
+        bot_data={"block": 100},
+    )
 
-    await sub.process_new_block(Block(number=200))
+    await harness.runtime.handle_block(Block(number=200))
 
-    assert BotStorage(sub.application.bot_data).block.value == 200
+    assert harness.storage.state.block.value == 200
 
 
 @pytest.mark.asyncio
 async def test_process_new_block_does_not_regress_persisted_block():
-    sub = TelegramSubscription.__new__(TelegramSubscription)
-    sub.application = SimpleNamespace(bot_data={"block": 500})
+    harness = _make_processing_harness(
+        aggregation_group=None,
+        event_names=frozenset(),
+        bot_data={"block": 500},
+    )
 
-    await sub.process_new_block(Block(number=300))
+    await harness.runtime.handle_block(Block(number=300))
 
-    assert BotStorage(sub.application.bot_data).block.value == 500
+    assert harness.storage.state.block.value == 500

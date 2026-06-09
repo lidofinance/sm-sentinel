@@ -2,10 +2,13 @@
 
 import logging
 from collections.abc import Iterable, MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Set
 
 from telegram.ext import BasePersistence, PicklePersistence
+
+from sentinel.modules.aggregation import AggregationWindow
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +229,122 @@ class NodeOperatorChats:
         return str(node_operator_id)
 
 
+class AggregationWindowStore:
+    """Helper exposing persisted aggregation windows."""
+
+    KEY = "aggregation_windows"
+    STATUS_PENDING = "pending"
+    STATUS_AGGREGATED = "aggregated"
+
+    def __init__(self, bot_data: MutableMapping[str, Any]):
+        self._bot_data = bot_data
+        self._bot_data[self.KEY] = self._normalise_windows(self._bot_data.get(self.KEY))
+
+    def upsert_pending(self, window: AggregationWindow) -> None:
+        self._put(window, self.STATUS_PENDING)
+
+    def mark_aggregated(self, window: AggregationWindow) -> None:
+        self._put(window, self.STATUS_AGGREGATED)
+
+    def discard(self, window: AggregationWindow) -> None:
+        self._records.pop(AggregationWindowRecord.key_for(window), None)
+
+    def pending(self) -> list[AggregationWindow]:
+        return [
+            record.window
+            for record in self._records_from(self._records)
+            if record.status == self.STATUS_PENDING
+        ]
+
+    def contains_active(self, group: str, block: int) -> bool:
+        return any(
+            record.window.group == group
+            and record.window.start_block <= block <= record.window.end_block
+            for record in self._records_from(self._records)
+        )
+
+    def prune(self, current_block: int, retain_blocks: int = 128) -> None:
+        min_end_block = current_block - retain_blocks
+        self._bot_data[self.KEY] = {
+            record.key: record.to_dict()
+            for record in self._records_from(self._records)
+            if record.status != self.STATUS_AGGREGATED or record.window.end_block >= min_end_block
+        }
+
+    @property
+    def _records(self) -> dict[str, dict[str, Any]]:
+        return self._bot_data[self.KEY]
+
+    def _put(self, window: AggregationWindow, status: str) -> None:
+        record = AggregationWindowRecord.from_window(window, status)
+        self._records[record.key] = record.to_dict()
+
+    @classmethod
+    def _records_from(cls, raw_records: dict[str, Any]) -> list["AggregationWindowRecord"]:
+        parsed_records: list[AggregationWindowRecord] = []
+        for record in raw_records.values():
+            try:
+                parsed_record = AggregationWindowRecord.from_dict(record)
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Skipping malformed aggregation window record: %r", record)
+                continue
+            if parsed_record.status not in {cls.STATUS_PENDING, cls.STATUS_AGGREGATED}:
+                logger.warning("Skipping aggregation window with unknown status: %r", record)
+                continue
+            parsed_records.append(parsed_record)
+        return parsed_records
+
+    @classmethod
+    def _normalise_windows(cls, value: Any) -> dict[str, dict[str, Any]]:
+        if not value:
+            return {}
+
+        if not isinstance(value, dict):
+            logger.warning("Ignoring malformed aggregation window state: %r", value)
+            return {}
+
+        return {record.key: record.to_dict() for record in cls._records_from(value)}
+
+
+@dataclass(frozen=True, slots=True)
+class AggregationWindowRecord:
+    window: AggregationWindow
+    status: str
+
+    @classmethod
+    def from_window(cls, window: AggregationWindow, status: str) -> "AggregationWindowRecord":
+        return cls(window=window, status=status)
+
+    @classmethod
+    def from_dict(cls, record: dict[str, Any]) -> "AggregationWindowRecord":
+        return cls(
+            window=AggregationWindow(
+                group=str(record["group"]),
+                start_block=int(record["start_block"]),
+                end_block=int(record["end_block"]),
+                event_names=frozenset(str(name) for name in record["event_names"]),
+            ),
+            status=str(record["status"]),
+        )
+
+    @property
+    def key(self) -> str:
+        return self.key_for(self.window)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group": self.window.group,
+            "start_block": int(self.window.start_block),
+            "end_block": int(self.window.end_block),
+            "event_names": sorted(self.window.event_names),
+            "status": self.status,
+        }
+
+    @staticmethod
+    def key_for(window: AggregationWindow) -> str:
+        return f"{window.group}:{window.start_block}:{window.end_block}"
+
+
 class BotStorage:
     """Utility wrapper around the application-wide bot data."""
 
@@ -236,6 +355,7 @@ class BotStorage:
         self._groups = ChatIdSet(bot_data, "group_ids")
         self._channels = ChatIdSet(bot_data, "channel_ids")
         self._node_operator_chats = NodeOperatorChats(bot_data)
+        self._aggregation_windows = AggregationWindowStore(bot_data)
 
     @property
     def block(self) -> BlockState:
@@ -256,6 +376,10 @@ class BotStorage:
     @property
     def node_operator_chats(self) -> NodeOperatorChats:
         return self._node_operator_chats
+
+    @property
+    def aggregation_windows(self) -> AggregationWindowStore:
+        return self._aggregation_windows
 
     def actual_chat_ids(self) -> Set[int]:
         return self.users.all().union(self.groups.all(), self.channels.all())

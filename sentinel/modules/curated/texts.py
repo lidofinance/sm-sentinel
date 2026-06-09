@@ -5,7 +5,15 @@ from web3.constants import ADDRESS_ZERO
 
 from sentinel.config import get_config
 from sentinel.modules.catalog import EventDefinition, build_grouped_event_list_text
-from sentinel.modules.formatting import markdown, nl, read_field
+from sentinel.modules.formatting import (
+    block_footer,
+    block_footer_tx_only,
+    markdown,
+    nl,
+    read_field,
+    transaction_footer,
+    transaction_footer_tx_only,
+)
 from sentinel.modules.registry import RegisterEventMessage
 from sentinel.modules.texts import BotTexts
 
@@ -295,21 +303,39 @@ CuratedTexts = BotTexts(
 EVENT_EMITS = "Event {} emitted with data: \n{}"
 
 
-def event_message_footer(no_id, link) -> Text:
-    return Text(nl(), f"nodeOperatorId: {no_id}\n", TextLink("Transaction", url=link))
+def event_transaction_footer(no_id, tx_link: str) -> Text:
+    return transaction_footer(f"nodeOperatorId: {no_id}", tx_link)
 
 
-def event_message_footer_with_operator_name(no_id, name, link) -> Text:
-    return Text(nl(), f"Node Operator: #{no_id} - {name}\n", TextLink("Transaction", url=link))
+def event_transaction_footer_with_operator_name(no_id, name, tx_link: str) -> Text:
+    return transaction_footer(f"Node Operator: #{no_id} - {name}", tx_link)
 
 
-def event_message_footer_tx_only(link) -> Text:
-    return Text(nl(), TextLink("Transaction", url=link))
+def event_transaction_footer_tx_only(tx_link: str) -> Text:
+    return transaction_footer_tx_only(tx_link)
+
+
+def event_block_footer(no_id, block_links: list[tuple[str, str]]) -> Text:
+    return block_footer(f"nodeOperatorId: {no_id}", block_links)
+
+
+def event_block_footer_with_operator_name(no_id, name, block_links: list[tuple[str, str]]) -> Text:
+    return block_footer(f"Node Operator: #{no_id} - {name}", block_links)
+
+
+def event_block_footer_tx_only(block_links: list[tuple[str, str]]) -> Text:
+    return block_footer_tx_only(block_links)
 
 
 @register_event_message("DepositedSigningKeysCountChanged")
-def deposited_signing_keys_count_changed(x):
-    return markdown("🤩 ", Bold("Keys were deposited!"), nl(), f"New deposited keys count: {x}")
+def deposited_signing_keys_count_changed(count, count_before):
+    return markdown(
+        "🤩 ",
+        Bold("Keys were deposited!"),
+        nl(),
+        "Deposited keys count: ",
+        Code(f"{count_before} -> {count}"),
+    )
 
 
 @register_event_message("TotalSigningKeysCountChanged")
@@ -460,7 +486,7 @@ def node_operator_manager_address_change_proposed(address):
         nl(),
         "Proposed address: ",
         Code(address),
-        nl(1),
+        nl(),
         "To complete the change, the Node Operator must confirm it from the new address.",
     )
 
@@ -480,7 +506,7 @@ def node_operator_reward_address_change_proposed(address):
         nl(),
         "Proposed address: ",
         Code(address),
-        nl(1),
+        nl(),
         "To complete the change, the Node Operator must confirm it from the new address.",
     )
 
@@ -514,14 +540,20 @@ def custom_rewards_claimer_set(rewards_claimer, previous_rewards_claimer=None):
     )
 
 
-def _format_fee_splits(fee_splits) -> str:
+def _format_fee_splits(fee_splits) -> str | Text:
     if not fee_splits:
         return "none"
-    return "\n".join(
-        f"- {read_field(fee_split, 'recipient', 0)}: "
-        f"{_format_basis_points_percent(read_field(fee_split, 'share', 1))}"
-        for fee_split in fee_splits
-    )
+    parts = []
+    for fee_split in fee_splits:
+        if parts:
+            parts.append(nl(1))
+        parts.extend(
+            [
+                f"- {_format_basis_points_percent(read_field(fee_split, 'share', 1))}: ",
+                Code(read_field(fee_split, "recipient", 0)),
+            ]
+        )
+    return Text(*parts)
 
 
 def _fee_splits_title(fee_splits, previous_fee_splits) -> str:
@@ -659,20 +691,79 @@ def validator_slashing_reported(key, key_url, key_index):
 
 
 @register_event_message("ValidatorExitRequest")
-def validator_exit_request(key, key_url, request_date, exit_until):
-    return markdown(
+def validator_exit_request(exit_requests):
+    if len(exit_requests) == 1:
+        exit_request = exit_requests[0]
+        return markdown(
+            "🚨 ",
+            Bold("Validator exit requested"),
+            nl(),
+            "Make sure to exit the key before ",
+            exit_request["exit_until"],
+            nl(1),
+            "Requested key: ",
+            TextLink(exit_request["key"], url=exit_request["key_url"]),
+            nl(1),
+            "Request date: ",
+            Code(exit_request["request_date"]),
+        )
+
+    exit_until_values = {exit_request["exit_until"] for exit_request in exit_requests}
+    request_date_values = {exit_request["request_date"] for exit_request in exit_requests}
+    parts: list = [
         "🚨 ",
-        Bold("Validator exit requested"),
+        Bold("Validator exits requested"),
         nl(),
-        "Make sure to exit the key before ",
-        exit_until,
-        nl(1),
-        "Requested key: ",
-        TextLink(key, url=key_url),
-        nl(1),
-        "Request date: ",
-        Code(request_date),
+    ]
+    if len(exit_until_values) == 1:
+        parts.extend(["Make sure to exit these keys before ", next(iter(exit_until_values)), nl(1)])
+    parts.extend(
+        [
+            "Requested keys:",
+            nl(1),
+            _format_validator_exit_requests(
+                exit_requests,
+                include_exit_until=len(exit_until_values) > 1,
+                include_request_date=len(request_date_values) > 1,
+            ),
+        ]
     )
+    if len(request_date_values) == 1:
+        parts.extend([nl(), "Request date: ", Code(next(iter(request_date_values)))])
+    return markdown(*parts)
+
+
+def _format_validator_exit_requests(
+    exit_requests,
+    *,
+    include_exit_until: bool,
+    include_request_date: bool,
+) -> Text:
+    parts = []
+    for index, exit_request in enumerate(exit_requests, start=1):
+        if parts:
+            parts.append(nl(1))
+        short_key = _shorten_validator_key_for_link(exit_request["key"])
+        parts.extend(
+            [
+                "- ",
+                "Validator ",
+                str(index),
+                ": ",
+                TextLink(short_key, url=exit_request["key_url"]),
+            ]
+        )
+        if include_exit_until:
+            parts.extend([nl(1), "  Exit before: ", exit_request["exit_until"]])
+        if include_request_date:
+            parts.extend([nl(1), "  Request date: ", Code(exit_request["request_date"])])
+    return Text(*parts)
+
+
+def _shorten_validator_key_for_link(key: str) -> str:
+    if len(key) <= 22:
+        return key
+    return f"{key[:10]}...{key[-8:]}"
 
 
 @register_event_message("ValidatorExitDelayProcessed")
@@ -946,10 +1037,17 @@ def _format_sub_node_operators(sub_node_operators) -> str:
         return "none"
     return "\n".join(
         f"- {_operator_label(operator)}"
-        f"\n  Weighted share: {_format_basis_points_percent(read_field(operator, 'weightedShare', 3))} "
+        "\n  Weighted share: "
+        f"{_format_basis_points_percent(read_field(operator, 'weightedShare', 3))} "
         f"(group share: {_format_basis_points_percent(read_field(operator, 'share', 1))})"
         for operator in sub_node_operators
     )
+
+
+def _format_node_operator_labels(node_operator_labels) -> str:
+    if not node_operator_labels:
+        return "none"
+    return "\n".join(f"- {label}" for label in node_operator_labels)
 
 
 def _format_basis_points_percent(value) -> str:
@@ -975,6 +1073,17 @@ def _operator_group_allocation_lines(operator, prefix: str = "") -> list:
         f"{weighted_share_label}: ",
         Code(_format_basis_points_percent(read_field(operator, "weightedShare", 3))),
         f" (group share: {_format_basis_points_percent(read_field(operator, 'share', 1))})",
+    ]
+
+
+def _operator_group_change_allocation_lines(operator, *, previous: bool = False) -> list:
+    prefix = "Previous " if previous else ""
+    return [
+        f"  {prefix}Share: ",
+        Code(_format_basis_points_percent(read_field(operator, "share", 1))),
+        nl(1),
+        f"  {prefix}Effective allocation share: ",
+        Code(_format_basis_points_percent(read_field(operator, "weightedShare", 3))),
     ]
 
 
@@ -1052,56 +1161,54 @@ def operator_group_updated(
             parts.append(nl())
     else:
         parts.append(nl(1))
-    if node_operator_label is not None:
-        parts.extend(
-            [
-                "Node Operator: ",
-                Code(str(node_operator_label)),
-                nl(1),
-            ]
-        )
     match change_kind:
         case "renamed":
             pass
         case "added":
             parts.extend(
                 [
-                    "Node Operator added.",
-                    nl(),
-                    *_operator_group_allocation_lines(new_operator),
+                    "Changes:",
+                    nl(1),
+                    f"- Added {node_operator_label}",
+                    nl(1),
+                    *_operator_group_change_allocation_lines(new_operator),
                 ]
             )
         case "changed":
             parts.extend(
                 [
-                    "Node Operator share changed.",
-                    nl(),
-                    "Weighted share: ",
-                    Code(
-                        f"{_format_basis_points_percent(read_field(old_operator, 'weightedShare', 3))} -> "
-                        f"{_format_basis_points_percent(read_field(new_operator, 'weightedShare', 3))}"
-                    ),
-                    nl(),
-                    "Group share: ",
+                    "Changes:",
+                    nl(1),
+                    f"- Updated {node_operator_label}",
+                    nl(1),
+                    "  Share: ",
                     Code(
                         f"{_format_basis_points_percent(read_field(old_operator, 'share', 1))} -> "
                         f"{_format_basis_points_percent(read_field(new_operator, 'share', 1))}"
+                    ),
+                    nl(1),
+                    "  Effective allocation share: ",
+                    Code(
+                        f"{_format_basis_points_percent(read_field(old_operator, 'weightedShare', 3))} -> "
+                        f"{_format_basis_points_percent(read_field(new_operator, 'weightedShare', 3))}"
                     ),
                 ]
             )
         case "removed":
             parts.extend(
                 [
-                    "Node Operator removed from this group.",
-                    nl(),
-                    *_operator_group_allocation_lines(old_operator, "Previous "),
+                    "Changes:",
+                    nl(1),
+                    f"- Removed {node_operator_label}",
+                    nl(1),
+                    *_operator_group_change_allocation_lines(old_operator, previous=True),
                 ]
             )
     return markdown(*parts)
 
 
 @register_event_message("OperatorGroupCleared")
-def operator_group_cleared(group_id, sub_node_operators, group_name=None):
+def operator_group_cleared(group_id, node_operator_labels, group_name=None):
     return markdown(
         "🚨 ",
         Bold("Operator group cleared"),
@@ -1111,7 +1218,9 @@ def operator_group_cleared(group_id, sub_node_operators, group_name=None):
         nl(1),
         "Affected Node Operators:",
         nl(1),
-        _format_sub_node_operators(sub_node_operators),
+        _format_node_operator_labels(node_operator_labels),
+        nl(),
+        "These Node Operators will no longer receive deposit allocation through this group.",
     )
 
 

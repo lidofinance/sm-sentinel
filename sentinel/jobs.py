@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from telegram.ext import Application
 
@@ -8,7 +8,11 @@ logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
-    from sentinel.rpc import Subscription
+
+
+class ChainHeadReader(Protocol):
+    async def get_block_number(self) -> int: ...
+
 
 CHAIN_HEAD_POLL_INTERVAL_SECONDS = 5 * 60  # 5 minutes
 ALERT_INTERVAL_MINUTES = 30
@@ -17,7 +21,7 @@ ALERT_INTERVAL_MINUTES = 30
 class JobContext:
     _alerted: bool = False
 
-    def __init__(self, subscription: "Subscription") -> None:
+    def __init__(self, subscription: ChainHeadReader) -> None:
         self._subscription = subscription
         self._chain_head: int = 0
         self._last_checked_chain_head: int = 0

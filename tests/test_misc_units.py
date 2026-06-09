@@ -9,7 +9,6 @@ import pytest
 import web3.exceptions
 from web3.types import FilterParams
 
-from sentinel.chain import ConnectOnDemand
 from sentinel.config import clear_config
 
 
@@ -22,6 +21,8 @@ def test_event_readable_string():
         block=100,
         tx=HexBytes("0x" + "00" * 32),
         address="0x0000000000000000000000000000000000000000",
+        log_index=0,
+        transaction_index=0,
     )
     s = event.readable()
     assert s.startswith("TestEvent(")
@@ -180,32 +181,19 @@ def test_config_parsing_and_templates(monkeypatch, stub_discover_contract_addres
     clear=True,
 )
 async def test_process_blocks_rate_limit(monkeypatch, stub_discover_contract_addresses):
-    from sentinel.app.module_adapter import build_module_adapter_from_config
-    from sentinel.app.health import HealthState
     from sentinel.config import get_config_async
-    from sentinel.rpc import Subscription
-
-    class DummyEth:
-        def contract(self, **kwargs):
-            return SimpleNamespace(**kwargs)
-
-    class DummyW3:
-        provider = None
-        eth = DummyEth()
+    from sentinel.web3_event_log_reader import Web3EventLogReader
 
     clear_config()
     cfg = await get_config_async()
-    w3 = DummyW3()
-    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
-    subscription = Subscription(
-        w3,
-        health=HealthState(),
-        module_adapter=module_adapter,
+    reader = Web3EventLogReader(
+        SimpleNamespace(),
+        request_interval_seconds=1 / cfg.process_blocks_requests_per_second,
     )
     try:
         start = asyncio.get_running_loop().time()
-        await subscription._throttle_process_blocks_request()
-        await subscription._throttle_process_blocks_request()
+        await reader.throttle()
+        await reader.throttle()
         elapsed = asyncio.get_running_loop().time() - start
         assert elapsed >= 0.45
     finally:
@@ -213,8 +201,22 @@ async def test_process_blocks_rate_limit(monkeypatch, stub_discover_contract_add
 
 
 @pytest.mark.asyncio
-async def test_get_block_number_uses_persistent_provider():
+async def test_get_block_number_uses_persistent_provider(monkeypatch):
     from sentinel.rpc import Subscription
+    from sentinel.app.health import HealthState
+
+    class FakeAdapter:
+        def event_sources(self):
+            return ()
+
+        def notifiable_events(self):
+            return set()
+
+        def side_effect_events(self):
+            return set()
+
+        def topic_abis(self):
+            return ()
 
     main_w3 = SimpleNamespace(
         provider=SimpleNamespace(
@@ -231,9 +233,16 @@ async def test_get_block_number_uses_persistent_provider():
         eth=SimpleNamespace(get_block_number=AsyncMock(return_value=222)),
     )
 
-    subscription = Subscription.__new__(Subscription)
-    subscription._w3 = main_w3
-    subscription._backfill_w3 = backfill_w3
+    monkeypatch.setattr(
+        "sentinel.rpc.get_config",
+        lambda: SimpleNamespace(process_blocks_requests_per_second=None),
+    )
+    subscription = Subscription(
+        main_w3,
+        health=HealthState(),
+        module_adapter=FakeAdapter(),
+        backfill_w3=backfill_w3,
+    )
 
     latest = await subscription.get_block_number()
 
@@ -243,72 +252,295 @@ async def test_get_block_number_uses_persistent_provider():
 
 
 @pytest.mark.asyncio
-async def test_process_blocks_from_uses_event_source_filters():
+async def test_replay_blocks_uses_configured_event_log_reader():
     from sentinel.models import Block, Event
-    from sentinel.modules.base import EventSource
     from sentinel.rpc import Subscription
 
-    topic = HexBytes("0x" + "01" * 32)
+    class FakeAdapter:
+        def event_sources(self):
+            return ()
 
-    class ProbeSubscription(Subscription):
-        async def process_event_log(self, event: Event):
-            self.events.append(event)
+        def notifiable_events(self):
+            return set()
 
-        async def process_new_block(self, block: Block):
-            self.blocks.append(block.number)
+        def side_effect_events(self):
+            return set()
 
-    subscription = ProbeSubscription.__new__(ProbeSubscription)
-    subscription._backfill_w3 = SimpleNamespace(
+        def topic_abis(self):
+            return ()
+
+    monkeypatch_config = SimpleNamespace(
+        process_blocks_requests_per_second=None,
+        block_batch_size=1000,
+    )
+    from unittest.mock import patch
+    from sentinel.app.health import HealthState
+
+    with patch("sentinel.rpc.get_config", return_value=monkeypatch_config):
+        subscription = Subscription(
+            SimpleNamespace(),
+            health=HealthState(),
+            module_adapter=FakeAdapter(),
+        )
+    subscription.cfg = SimpleNamespace(block_batch_size=1000)
+    subscription._shutdown_event = asyncio.Event()
+    subscription._health = SimpleNamespace(mark_progress=lambda: None)
+    event_consumer = SimpleNamespace(handle_event=AsyncMock())
+    block_consumer = SimpleNamespace(handle_block=AsyncMock())
+    subscription.add_event_consumer(event_consumer)
+    subscription.add_block_consumer(block_consumer)
+    event = Event(
+        event="ScopedEvent",
+        args={"keep": True},
+        block=1,
+        tx=HexBytes("0xdeadbeef"),
+        address="0x0000000000000000000000000000000000000001",
+        log_index=1,
+        transaction_index=0,
+    )
+
+    class FakeEventLogReader:
+        def __init__(self):
+            self.fetch_events = AsyncMock(return_value=[event])
+            self._w3 = SimpleNamespace(
+                eth=SimpleNamespace(get_block_number=AsyncMock(return_value=2)),
+            )
+
+        async def connected_w3(self):
+            return self._w3
+
+    subscription._event_log_reader = FakeEventLogReader()
+
+    await subscription.replay_blocks(1, 2)
+
+    subscription._event_log_reader.fetch_events.assert_awaited_once_with(
+        start_block=1,
+        end_block=2,
+    )
+    event_consumer.handle_event.assert_awaited_once_with(event)
+    block_consumer.handle_block.assert_awaited_once_with(Block(number=2))
+
+
+@pytest.mark.asyncio
+async def test_web3_event_log_reader_fetches_source_events_without_subscription(
+    monkeypatch,
+):
+    from sentinel.models import Event
+    from sentinel.modules.base import EventSource
+    from sentinel.web3_event_log_reader import Web3EventLogReader
+
+    topic = HexBytes("0x" + "02" * 32)
+    w3 = SimpleNamespace(
         provider=SimpleNamespace(
             is_connected=AsyncMock(return_value=True),
             connect=AsyncMock(),
         ),
-        eth=SimpleNamespace(),
+        eth=SimpleNamespace(
+            get_logs=AsyncMock(
+                return_value=[{"topics": [topic], "id": 1}, {"topics": [topic], "id": 2}]
+            ),
+        ),
     )
-    subscription.cfg = SimpleNamespace(block_batch_size=1000)
-    subscription.event_sources = (
+    event_sources = (
         EventSource(
             "scoped",
-            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
             frozenset({"ScopedEvent"}),
             lambda event: event.args["keep"],
         ),
     )
-    subscription.abi_by_topics = {topic: {"name": "ScopedEvent"}}
-    subscription._shutdown_event = asyncio.Event()
-    subscription._process_blocks_request_interval = None
-    subscription._health = SimpleNamespace(mark_progress=lambda: None)
-    subscription.events = []
-    subscription.blocks = []
-    subscription._get_logs_with_retry = AsyncMock(
-        return_value=[{"topics": [topic]}, {"topics": [topic]}]
+    abi_by_topics = {topic: {"name": "ScopedEvent"}}
+    reader = Web3EventLogReader(
+        w3,
+        event_sources=event_sources,
+        abi_by_topics=abi_by_topics,
+        request_interval_seconds=None,
     )
 
     decoded_events = [
         Event(
             event="ScopedEvent",
-            args={"keep": False},
+            args={"keep": True},
             block=1,
             tx=HexBytes("0xdeadbeef"),
-            address="0x0000000000000000000000000000000000000001",
+            address="0x0000000000000000000000000000000000000002",
+            log_index=2,
+            transaction_index=0,
         ),
         Event(
             event="ScopedEvent",
             args={"keep": True},
             block=1,
-            tx=HexBytes("0xdeadbeef"),
-            address="0x0000000000000000000000000000000000000001",
+            tx=HexBytes("0xfeedbeef"),
+            address="0x0000000000000000000000000000000000000002",
+            log_index=1,
+            transaction_index=0,
         ),
     ]
-    subscription._decode_event = lambda w3, event_abi, log: decoded_events.pop(0)
+    monkeypatch.setattr(
+        "sentinel.web3_event_log_reader.decode_event",
+        lambda w3, event_abi, log: decoded_events.pop(0),
+    )
 
-    await subscription.process_blocks_from(1, 2)
+    events = await reader.fetch_events(
+        start_block=1,
+        end_block=2,
+    )
 
-    filter_params = subscription._get_logs_with_retry.await_args.kwargs["filter_params"]
-    assert filter_params["address"] == "0x0000000000000000000000000000000000000001"
+    filter_params = w3.eth.get_logs.await_args.args[0]
+    assert filter_params["address"] == "0x0000000000000000000000000000000000000002"
     assert filter_params["topics"] == [topic]
-    assert [event.args["keep"] for event in subscription.events] == [True]
-    assert subscription.blocks == [2]
+    assert [event.log_index for event in events] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_web3_event_log_reader_filters_validator_exit_requests_by_staking_module(
+    monkeypatch,
+):
+    from sentinel.models import Event
+    from sentinel.modules.base import EventSource
+    from sentinel.web3_event_log_reader import Web3EventLogReader
+
+    topic = HexBytes("0x" + "03" * 32)
+    w3 = SimpleNamespace(
+        provider=SimpleNamespace(
+            is_connected=AsyncMock(return_value=True),
+            connect=AsyncMock(),
+        ),
+        eth=SimpleNamespace(
+            get_logs=AsyncMock(
+                return_value=[{"topics": [topic], "id": 1}, {"topics": [topic], "id": 2}]
+            ),
+        ),
+    )
+    reader = Web3EventLogReader(
+        w3,
+        event_sources=(
+            EventSource(
+                "vebo",
+                "0x0000000000000000000000000000000000000002",
+                frozenset({"ValidatorExitRequest"}),
+                lambda event: event.args["stakingModuleId"] == 5,
+            ),
+        ),
+        abi_by_topics={topic: {"name": "ValidatorExitRequest"}},
+        request_interval_seconds=None,
+    )
+    decoded_events = [
+        Event(
+            event="ValidatorExitRequest",
+            args={"stakingModuleId": 1, "nodeOperatorId": 42},
+            block=1,
+            tx=HexBytes("0xdeadbeef"),
+            address="0x0000000000000000000000000000000000000002",
+            log_index=1,
+            transaction_index=0,
+        ),
+        Event(
+            event="ValidatorExitRequest",
+            args={"stakingModuleId": 5, "nodeOperatorId": 42},
+            block=1,
+            tx=HexBytes("0xfeedbeef"),
+            address="0x0000000000000000000000000000000000000002",
+            log_index=2,
+            transaction_index=0,
+        ),
+    ]
+    monkeypatch.setattr(
+        "sentinel.web3_event_log_reader.decode_event",
+        lambda w3, event_abi, log: decoded_events.pop(0),
+    )
+
+    events = await reader.fetch_events(start_block=1, end_block=2)
+
+    assert [event.args["stakingModuleId"] for event in events] == [5]
+
+
+@pytest.mark.asyncio
+async def test_web3_event_log_reader_skips_empty_source_event_filters():
+    from sentinel.modules.base import EventSource
+    from sentinel.web3_event_log_reader import Web3EventLogReader
+
+    w3 = SimpleNamespace(
+        provider=SimpleNamespace(
+            is_connected=AsyncMock(return_value=True),
+            connect=AsyncMock(),
+        ),
+        eth=SimpleNamespace(get_logs=AsyncMock(return_value=[])),
+    )
+    reader = Web3EventLogReader(
+        w3,
+        event_sources=(
+            EventSource(
+                "empty",
+                "0x0000000000000000000000000000000000000002",
+                frozenset(),
+                None,
+            ),
+        ),
+        abi_by_topics={},
+        request_interval_seconds=None,
+    )
+
+    events = await reader.fetch_events(
+        start_block=1,
+        end_block=2,
+    )
+
+    assert events == []
+    w3.eth.get_logs.assert_not_awaited()
+
+
+def test_build_event_bindings_preserves_source_event_filter_intent():
+    from sentinel.modules.base import EventSource
+    from sentinel.web3_events import build_event_bindings
+
+    class FakeAdapter:
+        def event_sources(self):
+            return (
+                EventSource(
+                    "all",
+                    "0x0000000000000000000000000000000000000001",
+                    None,
+                    None,
+                ),
+                EventSource(
+                    "empty",
+                    "0x0000000000000000000000000000000000000002",
+                    frozenset(),
+                    None,
+                ),
+            )
+
+        def notifiable_events(self):
+            return {"Notifiable"}
+
+        def side_effect_events(self):
+            return set()
+
+        def topic_abis(self):
+            return ()
+
+    bindings = build_event_bindings(FakeAdapter())
+
+    assert bindings.event_sources[0].event_names is None
+    assert bindings.event_sources[1].event_names == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_web3_event_history_fetches_configured_reader_range():
+    from sentinel.services.event_history import Web3EventHistory
+
+    history = Web3EventHistory.__new__(Web3EventHistory)
+    history._event_log_reader = SimpleNamespace(fetch_events=AsyncMock(return_value=[]))
+
+    events = await history.fetch_events(1, 2)
+
+    assert events == []
+    history._event_log_reader.fetch_events.assert_awaited_once_with(
+        start_block=1,
+        end_block=2,
+    )
 
 
 @pytest.mark.asyncio
@@ -324,29 +556,8 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
     monkeypatch,
     stub_discover_contract_addresses,
 ):
-    from sentinel.app.module_adapter import build_module_adapter_from_config
-    from sentinel.config import get_config_async
-    from sentinel.app.health import HealthState
-    from sentinel.rpc import Subscription
+    from sentinel.web3_event_log_reader import Web3EventLogReader
 
-    class DummyEth:
-        def contract(self, **kwargs):
-            return SimpleNamespace(**kwargs)
-
-    class DummyW3:
-        provider = None
-        eth = DummyEth()
-
-    clear_config()
-    cfg = await get_config_async()
-    w3 = DummyW3()
-    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
-
-    subscription = Subscription(
-        w3,
-        health=HealthState(),
-        module_adapter=module_adapter,
-    )
     rate_limit_error = web3.exceptions.Web3RPCError(
         message="{'code': 429, 'message': 'throughput exceeded'}",
         rpc_response={"error": {"code": 429, "message": "throughput exceeded"}},
@@ -356,10 +567,11 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
             get_logs=AsyncMock(side_effect=[rate_limit_error, []]),
         ),
     )
-    monkeypatch.setattr("sentinel.rpc.BACKFILL_GET_LOGS_RETRY_INITIAL_DELAY_SECONDS", 0)
-    monkeypatch.setattr("sentinel.rpc.BACKFILL_GET_LOGS_RETRY_MAX_DELAY_SECONDS", 0)
+    reader = Web3EventLogReader(rpc_w3, request_interval_seconds=None)
+    monkeypatch.setattr("sentinel.web3_event_log_reader.GET_LOGS_RETRY_INITIAL_DELAY_SECONDS", 0)
+    monkeypatch.setattr("sentinel.web3_event_log_reader.GET_LOGS_RETRY_MAX_DELAY_SECONDS", 0)
 
-    logs = await subscription._get_logs_with_retry(
+    logs = await reader.get_logs_with_retry(
         w3=rpc_w3,
         filter_params=FilterParams(fromBlock=1, toBlock=1, address="0x1"),
         contract="0x1",
@@ -369,8 +581,6 @@ async def test_get_logs_with_retry_recovers_from_rate_limit(
 
     assert logs == []
     assert rpc_w3.eth.get_logs.await_count == 2
-    assert subscription._shutdown_event.is_set() is False
-    clear_config()
 
 
 @pytest.mark.asyncio
@@ -386,29 +596,8 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
     monkeypatch,
     stub_discover_contract_addresses,
 ):
-    from sentinel.app.module_adapter import build_module_adapter_from_config
-    from sentinel.config import get_config_async
-    from sentinel.app.health import HealthState
-    from sentinel.rpc import Subscription
+    from sentinel.web3_event_log_reader import Web3EventLogReader
 
-    class DummyEth:
-        def contract(self, **kwargs):
-            return SimpleNamespace(**kwargs)
-
-    class DummyW3:
-        provider = None
-        eth = DummyEth()
-
-    clear_config()
-    cfg = await get_config_async()
-    w3 = DummyW3()
-    module_adapter = build_module_adapter_from_config(cfg, w3, ConnectOnDemand(w3))
-
-    subscription = Subscription(
-        w3,
-        health=HealthState(),
-        module_adapter=module_adapter,
-    )
     fatal_error = web3.exceptions.Web3RPCError(
         message="execution reverted",
         rpc_response={"error": {"code": 3, "message": "execution reverted"}},
@@ -418,11 +607,12 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
             get_logs=AsyncMock(side_effect=fatal_error),
         ),
     )
-    monkeypatch.setattr("sentinel.rpc.BACKFILL_GET_LOGS_RETRY_INITIAL_DELAY_SECONDS", 0)
-    monkeypatch.setattr("sentinel.rpc.BACKFILL_GET_LOGS_RETRY_MAX_DELAY_SECONDS", 0)
+    reader = Web3EventLogReader(rpc_w3, request_interval_seconds=None)
+    monkeypatch.setattr("sentinel.web3_event_log_reader.GET_LOGS_RETRY_INITIAL_DELAY_SECONDS", 0)
+    monkeypatch.setattr("sentinel.web3_event_log_reader.GET_LOGS_RETRY_MAX_DELAY_SECONDS", 0)
 
     with pytest.raises(web3.exceptions.Web3RPCError):
-        await subscription._get_logs_with_retry(
+        await reader.get_logs_with_retry(
             w3=rpc_w3,
             filter_params=FilterParams(fromBlock=1, toBlock=1, address="0x1"),
             contract="0x1",
@@ -431,4 +621,3 @@ async def test_get_logs_with_retry_raises_non_retryable_errors(
         )
 
     assert rpc_w3.eth.get_logs.await_count == 1
-    clear_config()

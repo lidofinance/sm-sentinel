@@ -130,4 +130,4 @@ def register_handlers(runtime: BotRuntime) -> None:
     )
     application.add_handler(conversation_handler)
     application.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, tracking.chat_migration))
-    runtime.subscription.register_handlers()
+    runtime.notification_handler.register_handlers()

@@ -10,11 +10,11 @@ from web3 import AsyncHTTPProvider, AsyncWeb3, WebSocketProvider
 from web3.exceptions import TransactionNotFound
 from web3.types import RPCEndpoint, TxParams, TxReceipt
 
-from sentinel.models import Block, Event
+from sentinel.app.storage import BotStorage
+from sentinel.models import EventNotification
 from sentinel.app.health import HealthState
 from sentinel.module_types import ModuleType
-from sentinel.modules.side_effects import ModuleEventSideEffects
-from sentinel.rpc import Subscription
+from sentinel.services.subscription import ModuleRuntimeSupervisor, build_module_runtime
 
 
 @dataclass
@@ -108,8 +108,27 @@ async def build_subscription(ws_url: str, http_url: str) -> "EventReplayHarness"
     return EventReplayHarness(persistent_w3, w3, backfill_w3, module_adapter)
 
 
-class EventReplayHarness(Subscription):
-    """Minimal replay helper mirroring subscription entrypoints."""
+async def build_module_supervisor(ws_url: str, http_url: str) -> "ModuleSupervisorHarness":
+    from sentinel.config import get_config_async
+    from sentinel.config import set_config
+    from sentinel.app.contracts import discover_contract_addresses_from_url
+    from sentinel.app.module_adapter import build_module_adapter_from_config
+    from sentinel.chain import ConnectOnDemand
+
+    persistent_w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
+    backfill_w3 = AsyncWeb3(AsyncHTTPProvider(http_url))
+    w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
+    cfg = await get_config_async()
+    addresses = await discover_contract_addresses_from_url(http_url, cfg.contract_addresses.module)
+    cfg = replace(cfg, contract_addresses=addresses)
+    set_config(cfg)
+    chain = ConnectOnDemand(w3)
+    module_adapter = build_module_adapter_from_config(cfg, w3, chain)
+    return ModuleSupervisorHarness(persistent_w3, w3, backfill_w3, cfg, chain, module_adapter)
+
+
+class EventReplayHarness:
+    """Minimal replay helper using the production module runtime wiring."""
 
     def __init__(
         self,
@@ -118,37 +137,124 @@ class EventReplayHarness(Subscription):
         backfill_w3: AsyncWeb3,
         module_adapter,
     ) -> None:
-        super().__init__(
+        self._storage = _InMemoryProcessingStateProvider()
+        self._notification_sink = _RecordingNotificationSink()
+        self.runtime = build_module_runtime(
             persistent_w3,
             health=HealthState(),
             module_adapter=module_adapter,
+            storage=self._storage,
+            notification_sink=self._notification_sink,
             backfill_w3=backfill_w3,
         )
-        self.event_messages = module_adapter.build_event_messages()
-        self.event_side_effects = ModuleEventSideEffects(
-            module_adapter,
-            self.handle_csm_version_changed,
-        )
-        self.processed_events: list[tuple[Event, str]] = []
+        self.raw_subscription = self.runtime.raw_subscription
+        self._notification_sink.event_messages = self.runtime.event_messages
+        self._backfill_w3 = backfill_w3
+        self.processed_events = self._notification_sink.processed_events
 
-    async def handle_csm_version_changed(self, csm_version: int) -> None:
-        self.reconfigure_module_adapter(self.module_adapter)
+    async def replay_blocks(self, start_block: int, end_block: int | None = None):
+        await self.raw_subscription.replay_blocks(start_block, end_block=end_block)
 
-    async def process_event_log(self, event: Event):
-        event.tx = HexBytes("0xdeadbeef")
-        await self.event_side_effects.process_event(event)
-        self.processed_events.append(
-            (event, await self.event_messages.get_notification_plan(event))
-        )
+    async def subscribe(self) -> None:
+        await self.raw_subscription.subscribe()
 
-    async def process_new_block(self, block: Block):
-        pass
+    async def wait_until_subscribed(self, *, timeout: float = 10.0) -> None:
+        await self.raw_subscription.wait_until_subscribed(timeout=timeout)
+
+    async def stop(self) -> None:
+        await self.raw_subscription.stop()
 
     async def disconnect(self) -> None:
-        event_messages_w3 = getattr(getattr(self.event_messages, "chain", None), "w3", None)
+        event_messages_w3 = getattr(getattr(self.runtime.event_messages, "chain", None), "w3", None)
         providers = [
-            self._w3.provider,
+            self.raw_subscription._w3.provider,
             self._backfill_w3.provider,
+            event_messages_w3.provider if event_messages_w3 is not None else None,
+        ]
+        for provider in providers:
+            if provider is None or not hasattr(provider, "disconnect"):
+                continue
+            with suppress(Exception):
+                await provider.disconnect()
+
+
+class _InMemoryProcessingStateProvider:
+    def __init__(self) -> None:
+        self._bot_data: dict = {}
+
+    @property
+    def state(self) -> BotStorage:
+        return BotStorage(self._bot_data)
+
+
+class _RecordingNotificationSink:
+    def __init__(self) -> None:
+        self.event_messages = None
+        self.event_messages_provider = None
+        self.processed_events = []
+
+    async def emit(self, notification: EventNotification) -> None:
+        event_messages = (
+            self.event_messages_provider()
+            if self.event_messages_provider is not None
+            else self.event_messages
+        )
+        if event_messages is None:
+            raise RuntimeError("Recording notification sink is not bound")
+        for event in notification.source_events:
+            event.tx = HexBytes("0xdeadbeef")
+        plan = await event_messages.get_notification_plan(notification)
+        for event in notification.source_events:
+            self.processed_events.append((event, plan))
+
+
+class ModuleSupervisorHarness:
+    """Integration helper using the production module supervisor lifecycle."""
+
+    def __init__(
+        self,
+        persistent_w3: AsyncWeb3,
+        w3: AsyncWeb3,
+        backfill_w3: AsyncWeb3,
+        cfg,
+        chain,
+        module_adapter,
+    ) -> None:
+        self._storage = _InMemoryProcessingStateProvider()
+        self._notification_sink = _RecordingNotificationSink()
+        self._backfill_w3 = backfill_w3
+        self._chain = chain
+        self.supervisor = ModuleRuntimeSupervisor(
+            persistent_w3,
+            config=cfg,
+            chain=chain,
+            health=HealthState(),
+            module_adapter=module_adapter,
+            storage=self._storage,
+            notification_sink=self._notification_sink,
+            backfill_w3=backfill_w3,
+        )
+        self._notification_sink.event_messages_provider = lambda: self.supervisor.event_messages
+        self.processed_events = self._notification_sink.processed_events
+
+    async def subscribe(self) -> None:
+        await self.supervisor.subscribe()
+
+    async def wait_until_subscribed(self, *, timeout: float = 10.0) -> None:
+        await self.supervisor.wait_until_subscribed(timeout=timeout)
+
+    async def stop(self) -> None:
+        self.supervisor.request_shutdown()
+        await self.supervisor.raw_subscription.stop()
+
+    async def disconnect(self) -> None:
+        event_messages_w3 = getattr(
+            getattr(self.supervisor.event_messages, "chain", None), "w3", None
+        )
+        providers = [
+            self.supervisor.raw_subscription._w3.provider,
+            self._backfill_w3.provider,
+            self._chain.w3.provider,
             event_messages_w3.provider if event_messages_w3 is not None else None,
         ]
         for provider in providers:

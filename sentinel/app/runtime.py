@@ -7,12 +7,11 @@ if TYPE_CHECKING:
     from telegram.ext import Application
 
     from sentinel.app.health import HealthServer, HealthState
+    from sentinel.app.telegram_adapters import TelegramNotificationHandler
     from sentinel.chain import ConnectOnDemand
     from sentinel.jobs import JobContext
-    from sentinel.notifications import EventMessageEngine
     from sentinel.modules.base import ModuleAdapter
-    from sentinel.modules.side_effects import ModuleEventSideEffects
-    from sentinel.services.subscription import TelegramSubscription
+    from sentinel.services.subscription import ModuleRuntimeSupervisor
 
 
 _RUNTIME_ATTR = "_module_runtime"
@@ -22,16 +21,21 @@ _RUNTIME_ATTR = "_module_runtime"
 class BotRuntime:
     """Lightweight container for the long-lived bot context."""
 
-    config: Config
     application: "Application"
-    subscription: "TelegramSubscription"
-    event_messages: "EventMessageEngine"
-    event_side_effects: "ModuleEventSideEffects"
+    module_supervisor: "ModuleRuntimeSupervisor"
+    notification_handler: "TelegramNotificationHandler"
     job_context: "JobContext"
-    module_adapter: "ModuleAdapter"
     chain: "ConnectOnDemand"
     health: "HealthState"
     health_server: "HealthServer"
+
+    @property
+    def config(self) -> Config:
+        return self.module_supervisor.cfg
+
+    @property
+    def module_adapter(self) -> "ModuleAdapter":
+        return self.module_supervisor.module_runtime.module_adapter
 
 
 def attach_runtime(runtime: BotRuntime) -> None:
