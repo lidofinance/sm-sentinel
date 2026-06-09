@@ -4,7 +4,7 @@ from typing import Any
 
 from eth_utils import humanize_wei
 
-from sentinel.models import Event
+from sentinel.models import EventNotification
 from sentinel.modules.distribution import (
     DistributionLogFetcher,
     parse_distribution_log,
@@ -26,7 +26,7 @@ class BaseModule(EventMessageEngineBase):
     parametersRegistry: Any
     _distribution_log_fetcher: DistributionLogFetcher
 
-    def reconfigure(self, module_adapter: Any) -> None:
+    def _bind_module_adapter(self, module_adapter: Any) -> None:
         self.module_adapter = module_adapter
         self.chain = module_adapter.chain
         self.module_address = module_adapter.addresses.module
@@ -36,24 +36,29 @@ class BaseModule(EventMessageEngineBase):
         self.accounting = module_adapter.contracts.accounting
         self.parametersRegistry = module_adapter.contracts.parameters_registry
 
-    async def deposited_signing_keys_count_changed(self, event: Event):
-        template = self._require_message_template(event.event)
-        return template(event.args["depositedKeysCount"]) + await self.event_footer(event)
-
-    async def total_signing_keys_count_changed(self, event: Event):
+    async def deposited_signing_keys_count_changed(self, event: EventNotification):
+        first_event = event.source_events[0]
         template = self._require_message_template(event.event)
         node_operator = await self.module.functions.getNodeOperator(
             event.args["nodeOperatorId"]
-        ).call(block_identifier=event.block - 1)
-        return template(
-            event.args["totalKeysCount"], node_operator.totalAddedKeys
-        ) + await self.event_footer(event)
+        ).call(block_identifier=first_event.block - 1)
+        footer = await self.notification_footer(event)
+        return template(event.args["depositedKeysCount"], node_operator.totalDepositedKeys) + footer
 
-    async def vetted_signing_keys_count_decreased(self, event: Event):
+    async def total_signing_keys_count_changed(self, event: EventNotification):
+        first_event = event.source_events[0]
         template = self._require_message_template(event.event)
-        return template() + await self.event_footer(event)
+        node_operator = await self.module.functions.getNodeOperator(
+            event.args["nodeOperatorId"]
+        ).call(block_identifier=first_event.block - 1)
+        footer = await self.notification_footer(event)
+        return template(event.args["totalKeysCount"], node_operator.totalAddedKeys) + footer
 
-    async def key_removal_charge_applied(self, event: Event):
+    async def vetted_signing_keys_count_decreased(self, event: EventNotification):
+        template = self._require_message_template(event.event)
+        return template() + await self.notification_footer(event)
+
+    async def key_removal_charge_applied(self, event: EventNotification):
         template = self._require_message_template(event.event)
         curve_id = await self.accounting.functions.getBondCurveId(
             event.args["nodeOperatorId"]
@@ -61,136 +66,159 @@ class BaseModule(EventMessageEngineBase):
         amount = await self.parametersRegistry.functions.getKeyRemovalCharge(curve_id).call(
             block_identifier=event.block
         )
-        return template(humanize_wei(amount)) + await self.event_footer(event)
+        return template(humanize_wei(amount)) + await self.notification_footer(event)
 
-    async def key_allocated_balance_changed(self, event: Event):
-        # TODO: batch multiple key balance updates for the same operator. There is no
-        # event grouping mechanic yet; doing it here would lose per-key context and
-        # notification targeting.
+    async def notification_footer(self, event: EventNotification) -> str:
+        source_events = event.source_events
+        source_txs = {source_event.tx for source_event in source_events}
+        if len(source_txs) == 1:
+            return await self.event_footer(source_events[-1])
+        return await self.block_footer(event)
+
+    @staticmethod
+    def notification_block_range(event: EventNotification) -> tuple[int, int]:
+        source_blocks = {source_event.block for source_event in event.source_events}
+        return min(source_blocks), max(source_blocks)
+
+    async def block_footer(self, event: EventNotification) -> str:
+        raise NotImplementedError
+
+    async def key_allocated_balance_changed(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             event.args["keyIndex"],
             humanize_wei(event.args["newTotal"]),
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
-    async def bond_curve_set(self, event: Event):
+    async def bond_curve_set(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["curveId"]) + await self.event_footer(event)
+        return template(event.args["curveId"]) + await self.notification_footer(event)
 
-    async def node_operator_manager_address_change_proposed(self, event: Event):
+    async def node_operator_manager_address_change_proposed(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["newProposedAddress"]) + await self.event_footer(event)
+        return template(event.args["newProposedAddress"]) + await self.notification_footer(event)
 
-    async def node_operator_manager_address_changed(self, event: Event):
+    async def node_operator_manager_address_changed(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["newAddress"]) + await self.event_footer(event)
+        return template(event.args["newAddress"]) + await self.notification_footer(event)
 
-    async def node_operator_reward_address_change_proposed(self, event: Event):
+    async def node_operator_reward_address_change_proposed(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["newProposedAddress"]) + await self.event_footer(event)
+        return template(event.args["newProposedAddress"]) + await self.notification_footer(event)
 
-    async def node_operator_reward_address_changed(self, event: Event):
+    async def node_operator_reward_address_changed(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(event.args["newAddress"]) + await self.event_footer(event)
+        return template(event.args["newAddress"]) + await self.notification_footer(event)
 
-    async def custom_rewards_claimer_set(self, event: Event):
+    async def custom_rewards_claimer_set(self, event: EventNotification):
         template = self._require_message_template(event.event)
         previous_rewards_claimer = await self.accounting.functions.getCustomRewardsClaimer(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
         return template(
             event.args["rewardsClaimer"], previous_rewards_claimer
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
-    async def fee_splits_set(self, event: Event):
+    async def fee_splits_set(self, event: EventNotification):
         template = self._require_message_template(event.event)
         previous_fee_splits = await self.accounting.functions.getFeeSplits(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
-        return template(event.args["feeSplits"], previous_fee_splits) + await self.event_footer(
-            event
-        )
+        return template(
+            event.args["feeSplits"], previous_fee_splits
+        ) + await self.notification_footer(event)
 
-    async def bond_debt_increased(self, event: Event):
+    async def bond_debt_increased(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.notification_footer(event)
 
-    async def bond_debt_covered(self, event: Event):
+    async def bond_debt_covered(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.notification_footer(event)
 
-    async def expired_bond_lock_removed(self, event: Event):
+    async def expired_bond_lock_removed(self, event: EventNotification):
         # TODO: add a time-based notification for expired bond locks that can be
         # unlocked. This is not event-based, so it needs a separate scheduled scan
         # rather than a quick event handler change.
         template = self._require_message_template(event.event)
-        return template() + await self.event_footer(event)
+        return template() + await self.notification_footer(event)
 
-    async def general_delayed_penalty_reported(self, event: Event):
+    async def general_delayed_penalty_reported(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template(
             humanize_wei(event.args["amount"]),
             humanize_wei(event.args["additionalFine"]),
             event.args["details"],
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
-    async def general_delayed_penalty_settled(self, event: Event):
+    async def general_delayed_penalty_settled(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.notification_footer(event)
 
-    async def general_delayed_penalty_cancelled(self, event: Event):
+    async def general_delayed_penalty_cancelled(self, event: EventNotification):
         template = self._require_message_template(event.event)
         remaining_amount = humanize_wei(
             await self.accounting.functions.getActualLockedBond(event.args["nodeOperatorId"]).call(
                 block_identifier=event.block
             )
         )
-        return template(remaining_amount) + await self.event_footer(event)
+        return template(remaining_amount) + await self.notification_footer(event)
 
-    async def general_delayed_penalty_compensated(self, event: Event):
+    async def general_delayed_penalty_compensated(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        return template(humanize_wei(event.args["amount"])) + await self.event_footer(event)
+        return template(humanize_wei(event.args["amount"])) + await self.notification_footer(event)
 
-    async def validator_slashing_reported(self, event: Event):
+    async def validator_slashing_reported(self, event: EventNotification):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
-        return template(key, key_url, event.args["keyIndex"]) + await self.event_footer(event)
+        return template(key, key_url, event.args["keyIndex"]) + await self.notification_footer(
+            event
+        )
 
-    async def validator_exit_request(self, event: Event):
-        # TODO: batch multiple requested-to-exit keys for the same operator and add
-        # delayed reminders. Before reminding, verify each validator has not exited
+    async def validator_exit_request(self, event: EventNotification):
+        # TODO: add delayed reminders. Before reminding, verify each validator has not exited
         # yet; this needs persisted pending-exit state plus a scheduled recheck.
         template = self._require_message_template(event.event)
-        key, key_url = self.validator_link(event.args["validatorPubkey"])
-        request_date = datetime.datetime.fromtimestamp(event.args["timestamp"], datetime.UTC)
         curve_id = await self.accounting.functions.getBondCurveId(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block)
         allowed_exit_delay = await self.parametersRegistry.functions.getAllowedExitDelay(
             curve_id
         ).call(block_identifier=event.block)
-        exit_until = request_date + datetime.timedelta(seconds=allowed_exit_delay)
-        return template(
-            key, key_url, _format_date(request_date), _format_date(exit_until)
-        ) + await self.event_footer(event)
+        exit_requests = []
+        for source_event in event.source_events:
+            key, key_url = self.validator_link(source_event.args["validatorPubkey"])
+            request_date = datetime.datetime.fromtimestamp(
+                source_event.args["timestamp"], datetime.UTC
+            )
+            exit_until = request_date + datetime.timedelta(seconds=allowed_exit_delay)
+            exit_requests.append(
+                {
+                    "key": key,
+                    "key_url": key_url,
+                    "request_date": _format_date(request_date),
+                    "exit_until": _format_date(exit_until),
+                }
+            )
+        return template(exit_requests) + await self.notification_footer(event)
 
-    async def triggered_exit_fee_recorded(self, event: Event):
+    async def triggered_exit_fee_recorded(self, event: EventNotification):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
         return template(
             key,
             key_url,
             humanize_wei(event.args["withdrawalRequestRecordedFee"]),
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
-    async def strikes_penalty_processed(self, event: Event):
+    async def strikes_penalty_processed(self, event: EventNotification):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
         return template(
             key, key_url, humanize_wei(event.args["strikesPenalty"])
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
-    async def validator_withdrawn(self, event: Event):
+    async def validator_withdrawn(self, event: EventNotification):
         template = self._require_message_template(event.event)
         key, key_url = self.validator_link(event.args["pubkey"])
         return template(
@@ -198,12 +226,12 @@ class BaseModule(EventMessageEngineBase):
             key_url,
             humanize_wei(event.args["exitBalance"]),
             humanize_wei(event.args["slashingPenalty"]),
-        ) + await self.event_footer(event)
+        ) + await self.notification_footer(event)
 
-    async def distribution_log_updated(self, event: Event):
+    async def distribution_log_updated(self, event: EventNotification):
         template = self._require_message_template(event.event)
         base_message = template()
-        footer = await self.event_footer(event)
+        footer = await self.notification_footer(event)
         plan = NotificationPlan(broadcast=f"{base_message}{footer}")
 
         log_cid = event.args.get("logCid")

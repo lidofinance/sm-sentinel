@@ -34,6 +34,7 @@ These are the core guidelines for working in this repository.
 - Tests live in `tests/` and are named `test_*.py` with clear, behavior-driven names.
 - Mock external I/O (Web3, `aiohttp`, env) using `unittest.mock` and `@patch.dict`.
 - Run fast: avoid real network calls; rely on the prebuilt `.venv` via `uv run`.
+- Before handing off, mirror CI by running `uv run ruff check .`, `uv run ruff format --check .`, and `uv run ty check`.
 
 ## Commit & Pull Requests
 - Commits: imperative mood, concise title, context in body (what/why), reference issues (e.g., `Closes #123`).

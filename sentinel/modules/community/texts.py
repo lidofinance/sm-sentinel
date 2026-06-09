@@ -4,7 +4,14 @@ from aiogram.utils.formatting import Text, Bold, TextLink, Code
 from web3.constants import ADDRESS_ZERO
 from sentinel.config import get_config
 from sentinel.modules.catalog import EventDefinition, build_grouped_event_list_text
-from sentinel.modules.formatting import markdown, nl
+from sentinel.modules.formatting import (
+    block_footer,
+    block_footer_tx_only,
+    markdown,
+    nl,
+    transaction_footer,
+    transaction_footer_tx_only,
+)
 from sentinel.modules.registry import RegisterEventMessage
 from sentinel.modules.texts import BotTexts
 
@@ -293,17 +300,31 @@ CommunityTexts = BotTexts(
 EVENT_EMITS = "Event {} emitted with data: \n{}"
 
 
-def event_message_footer(no_id, link) -> Text:
-    return Text(nl(), f"nodeOperatorId: {no_id}\n", TextLink("Transaction", url=link))
+def event_transaction_footer(no_id, tx_link: str) -> Text:
+    return transaction_footer(f"nodeOperatorId: {no_id}", tx_link)
 
 
-def event_message_footer_tx_only(link) -> Text:
-    return Text(nl(), TextLink("Transaction", url=link))
+def event_transaction_footer_tx_only(tx_link: str) -> Text:
+    return transaction_footer_tx_only(tx_link)
+
+
+def event_block_footer(no_id, block_links: list[tuple[str, str]]) -> Text:
+    return block_footer(f"nodeOperatorId: {no_id}", block_links)
+
+
+def event_block_footer_tx_only(block_links: list[tuple[str, str]]) -> Text:
+    return block_footer_tx_only(block_links)
 
 
 @register_event_message("DepositedSigningKeysCountChanged")
-def deposited_signing_keys_count_changed(x):
-    return markdown("🤩 ", Bold("Keys were deposited!"), nl(), f"New deposited keys count: {x}")
+def deposited_signing_keys_count_changed(count, count_before):
+    return markdown(
+        "🤩 ",
+        Bold("Keys were deposited!"),
+        nl(),
+        "Deposited keys count: ",
+        Code(f"{count_before} -> {count}"),
+    )
 
 
 @register_event_message("ELRewardsStealingPenaltyCancelled")
@@ -460,14 +481,20 @@ def _fee_split_value(fee_split, field: str, index: int):
     return fee_split[index]
 
 
-def _format_fee_splits(fee_splits) -> str:
+def _format_fee_splits(fee_splits) -> str | Text:
     if not fee_splits:
         return "none"
-    return "\n".join(
-        f"- {_fee_split_value(fee_split, 'recipient', 0)}: "
-        f"{_format_basis_points_percent(_fee_split_value(fee_split, 'share', 1))}"
-        for fee_split in fee_splits
-    )
+    parts = []
+    for fee_split in fee_splits:
+        if parts:
+            parts.append(nl(1))
+        parts.extend(
+            [
+                f"- {_format_basis_points_percent(_fee_split_value(fee_split, 'share', 1))}: ",
+                Code(_fee_split_value(fee_split, "recipient", 0)),
+            ]
+        )
+    return Text(*parts)
 
 
 def _format_basis_points_percent(value) -> str:
@@ -578,7 +605,7 @@ def node_operator_manager_address_change_proposed(address):
             nl(),
             "Proposed address: ",
             Code(address),
-            nl(1),
+            nl(),
             "To complete the change, the Node Operator must confirm it from the new address.",
         )
 
@@ -599,7 +626,7 @@ def node_operator_reward_address_change_proposed(address):
             nl(),
             "Proposed address: ",
             Code(address),
-            nl(1),
+            nl(),
             "To complete the change, the Node Operator must confirm it from the new address.",
         )
 
@@ -671,27 +698,97 @@ def total_signing_keys_count_changed(count, count_before):
 
 
 @register_event_message("ValidatorExitRequest")
-def validator_exit_request(key, key_url, request_date, exit_until):
-    return markdown(
+def validator_exit_request(exit_requests):
+    if len(exit_requests) == 1:
+        exit_request = exit_requests[0]
+        key = exit_request["key"]
+        key_url = exit_request["key_url"]
+        request_date = exit_request["request_date"]
+        exit_until = exit_request["exit_until"]
+        return markdown(
+            "🚨 ",
+            Bold("Validator exit requested"),
+            nl(),
+            "Make sure to exit the key before ",
+            exit_until,
+            nl(1),
+            "Check the ",
+            TextLink(
+                "Exiting CSM validators",
+                url="https://dvt-homestaker.stakesaurus.com/bonded-validators-setup/lido-csm/exiting-csm-validators",
+            ),
+            " guide for more details",
+            nl(1),
+            "Requested key: ",
+            TextLink(key, url=key_url),
+            nl(1),
+            "Request date: ",
+            Code(request_date),
+        )
+
+    exit_until_values = {exit_request["exit_until"] for exit_request in exit_requests}
+    request_date_values = {exit_request["request_date"] for exit_request in exit_requests}
+    parts: list = [
         "🚨 ",
-        Bold("Validator exit requested"),
+        Bold("Validator exits requested"),
         nl(),
-        "Make sure to exit the key before ",
-        exit_until,
-        nl(1),
-        "Check the ",
-        TextLink(
-            "Exiting CSM validators",
-            url="https://dvt-homestaker.stakesaurus.com/bonded-validators-setup/lido-csm/exiting-csm-validators",
-        ),
-        " guide for more details",
-        nl(1),
-        "Requested key: ",
-        TextLink(key, url=key_url),
-        nl(1),
-        "Request date: ",
-        Code(request_date),
+    ]
+    if len(exit_until_values) == 1:
+        parts.extend(["Make sure to exit these keys before ", next(iter(exit_until_values)), nl(1)])
+    parts.extend(
+        [
+            "Check the ",
+            TextLink(
+                "Exiting CSM validators",
+                url="https://dvt-homestaker.stakesaurus.com/bonded-validators-setup/lido-csm/exiting-csm-validators",
+            ),
+            " guide for more details",
+            nl(1),
+            "Requested keys:",
+            nl(1),
+            _format_validator_exit_requests(
+                exit_requests,
+                include_exit_until=len(exit_until_values) > 1,
+                include_request_date=len(request_date_values) > 1,
+            ),
+        ]
     )
+    if len(request_date_values) == 1:
+        parts.extend([nl(), "Request date: ", Code(next(iter(request_date_values)))])
+    return markdown(*parts)
+
+
+def _format_validator_exit_requests(
+    exit_requests,
+    *,
+    include_exit_until: bool,
+    include_request_date: bool,
+) -> Text:
+    parts = []
+    for index, exit_request in enumerate(exit_requests, start=1):
+        if parts:
+            parts.append(nl(1))
+        short_key = _shorten_validator_key_for_link(exit_request["key"])
+        parts.extend(
+            [
+                "- ",
+                "Validator ",
+                str(index),
+                ": ",
+                TextLink(short_key, url=exit_request["key_url"]),
+            ]
+        )
+        if include_exit_until:
+            parts.extend([nl(1), "  Exit before: ", exit_request["exit_until"]])
+        if include_request_date:
+            parts.extend([nl(1), "  Request date: ", Code(exit_request["request_date"])])
+    return Text(*parts)
+
+
+def _shorten_validator_key_for_link(key: str) -> str:
+    if len(key) <= 22:
+        return key
+    return f"{key[:10]}...{key[-8:]}"
 
 
 @register_event_message("ValidatorExitDelayProcessed")

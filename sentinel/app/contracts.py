@@ -241,7 +241,6 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
             csm_version=csm_version,
         )
 
-    _log_discovered_addresses(addresses)
     return addresses
 
 
@@ -289,7 +288,7 @@ def _find_staking_module_id(modules: list[tuple], module_address: str) -> int:
     raise RuntimeError("Failed to resolve staking module ID from staking router modules")
 
 
-def _log_discovered_addresses(addresses: ContractAddresses) -> None:
+def log_discovered_addresses(addresses: ContractAddresses) -> None:
     printable = json.dumps(addresses.as_dict(), indent=2, sort_keys=True)
     logger.info("Discovered contract addresses:\n%s", printable)
 

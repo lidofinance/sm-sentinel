@@ -3,7 +3,7 @@ import logging
 import os
 from dataclasses import dataclass
 
-from sentinel.app.contracts import ContractAddresses
+from sentinel.app.contracts import ContractAddresses, log_discovered_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -165,10 +165,12 @@ async def _discover_contract_addresses_with_retry(provider_url: str, module_addr
     attempt = 1
     while True:
         try:
-            return await asyncio.wait_for(
+            addresses = await asyncio.wait_for(
                 _discover_contract_addresses(provider_url, module_address),
                 timeout=RPC_DISCOVERY_TIMEOUT_SECONDS,
             )
+            log_discovered_addresses(addresses)
+            return addresses
         except asyncio.TimeoutError:
             logger.warning(
                 "Timed out discovering contract addresses from WEB3 provider after %ss "

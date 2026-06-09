@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 from async_lru import alru_cache
 
 from sentinel.config import get_config
-from sentinel.models import Event, EventHandler
+from sentinel.models import Event, EventHandler, EventNotification
 from sentinel.modules.distribution import DistributionLogFetcher
 from sentinel.notifications import NotificationPlan
 
@@ -20,9 +20,9 @@ class EventMessageEngineBase:
 
     def __init__(self, module_adapter: Any) -> None:
         self.cfg = get_config()
-        self.reconfigure(module_adapter)
+        self._bind_module_adapter(module_adapter)
 
-    def reconfigure(self, module_adapter: Any) -> None:
+    def _bind_module_adapter(self, module_adapter: Any) -> None:
         raise NotImplementedError
 
     @alru_cache(maxsize=3)
@@ -31,10 +31,10 @@ class EventMessageEngineBase:
             raise ValueError("log_cid must be provided")
         return await self._distribution_log_fetcher(log_cid)
 
-    async def default(self, event: Event):
+    async def default(self, event: EventNotification):
         return NotificationPlan(broadcast=f"Event {event.event} emitted with data: \n{event.args}")
 
-    async def get_notification_plan(self, event: Event):
+    async def get_notification_plan(self, event: EventNotification):
         if event.event not in self.module_adapter.notifiable_events():
             return None
         async with self.chain:
@@ -66,6 +66,12 @@ class EventMessageEngineBase:
     def transaction_link(self, event: Event) -> str:
         tx_template = self._require_template(self.cfg.etherscan_tx_url_template, "ETHERSCAN_URL")
         return tx_template.format("0x" + event.tx.hex())
+
+    def block_link(self, block: int) -> str:
+        block_template = self._require_template(
+            self.cfg.etherscan_block_url_template, "ETHERSCAN_URL"
+        )
+        return block_template.format(block)
 
     def to_hex(self, value) -> str:
         return self.chain.w3.to_hex(value)

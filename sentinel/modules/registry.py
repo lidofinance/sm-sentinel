@@ -3,12 +3,20 @@ from sentinel.modules.event_engine import MessageTemplate
 
 
 class RegisterEventHandler:
-    def __init__(self, registry: dict[str, EventHandler], event_name: str):
+    def __init__(
+        self,
+        registry: dict[str, EventHandler],
+        event_name: str,
+        aggregation_group=None,
+    ):
         self.registry = registry
         self.event_name = event_name
+        self.aggregation_group = aggregation_group
 
     def __call__(self, func):
-        self.registry[self.event_name] = EventHandler(self.event_name, func)
+        self.registry[self.event_name] = EventHandler(
+            self.event_name, func, aggregation_group=self.aggregation_group
+        )
         return func
 
 

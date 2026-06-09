@@ -6,7 +6,7 @@ import pytest
 
 from sentinel.config import get_config, clear_config
 
-from .helpers import replay_transaction_on_anvil, build_subscription
+from .helpers import build_module_supervisor, replay_transaction_on_anvil, build_subscription
 
 
 COMMUNITY_HOODI_MODULE = "0x79CEf36D84743222f37765204Bec41E92a93E59d"
@@ -69,9 +69,9 @@ async def _exercise_event(
                     f"found={[plan.broadcast if plan else None for event, plan in harness.processed_events]}"
                 )
             finally:
-                harness._shutdown_event.set()
+                await harness.stop()
         else:
-            await harness.process_blocks_from(fork_block - 1, fork_block)
+            await harness.replay_blocks(fork_block - 1, fork_block)
             assert _has_expected_message(
                 harness, event_name=event_name, expected_markdown=expected_markdown
             ), (
@@ -111,6 +111,53 @@ def _has_expected_message(harness, *, event_name: str, expected_markdown: str | 
     return expected_markdown in messages
 
 
+async def test_process_live_initialized_v3_upgrade_rebuilds_runtime(anvil_launcher):
+    anvil = await anvil_launcher(2722010)
+    harness = await build_module_supervisor(anvil.ws_url, anvil.http_url)
+    subscription_task: asyncio.Task | None = None
+    expected_markdown = (
+        "🎉 *CSM v3 is live\\!*\n\n"
+        "Check the [CSM UI](https://csm.lido.fi) "
+        "for updated operator workflows and current module details\\.\n\n"
+        "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
+    )
+
+    try:
+        assert harness.supervisor.module_runtime.module_adapter.csm_version == 2
+        cfg = get_config()
+        subscription_task = asyncio.create_task(harness.subscribe())
+        await harness.wait_until_subscribed()
+
+        await replay_transaction_on_anvil(
+            fork_provider_url=cfg.web3_socket_provider,
+            anvil_http_url=anvil.http_url,
+            tx_hash="0xcccb19dcb5e0695cb15ce08894d64cf4b304c794f20b48995855f4e8e48d50cb",
+        )
+
+        assert await _wait_for(
+            lambda: (
+                harness.supervisor.module_runtime.module_adapter.csm_version == 3
+                and _has_expected_message(
+                    harness,
+                    event_name="Initialized",
+                    expected_markdown=expected_markdown,
+                )
+            ),
+            timeout=15.0,
+        ), (
+            "Did not process Hoodi CSM v3 Initialized upgrade, "
+            f"csm_version={harness.supervisor.module_runtime.module_adapter.csm_version}, "
+            f"found={[plan.broadcast if plan else None for event, plan in harness.processed_events]}"
+        )
+    finally:
+        await harness.stop()
+        await harness.disconnect()
+        if subscription_task:
+            subscription_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await subscription_task
+
+
 @pytest.fixture(params=[True, False], ids=["via_subscription", "via_process_blocks"])
 def via_subscription(request) -> bool:
     return request.param
@@ -123,7 +170,7 @@ async def test_process_blocks_deposited_signing_keys_count_changed(
         event_name="DepositedSigningKeysCountChanged",
         fork_block=1279457,
         tx_hash="0xb6be980ac363c47424f972576ae13f46cd41f86fac3157586553a77a063f1926",
-        expected_markdown="🤩 *Keys were deposited\\!*\n\nNew deposited keys count: 1\n\nnodeOperatorId: 299\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
+        expected_markdown="🤩 *Keys were deposited\\!*\n\nDeposited keys count: `0 \\-\\> 1`\n\nnodeOperatorId: 299\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )

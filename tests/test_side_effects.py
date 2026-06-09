@@ -1,15 +1,15 @@
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 
 from hexbytes import HexBytes
 import pytest
 
 from sentinel.models import Event
-from sentinel.modules.community.adapter import CommunityModuleAdapter
 from sentinel.modules.curated.adapter import CuratedModuleAdapter
 from sentinel.modules.side_effects import (
-    CsmInitializedVersionSwitchProcessor,
     CuratedMetadataCacheProcessor,
+    ModuleEventSideEffects,
     NodeOperatorCountProcessor,
 )
 
@@ -21,68 +21,9 @@ def _event(event: str, args: dict, address: str) -> Event:
         block=1,
         tx=HexBytes("0xdeadbeef"),
         address=address,
+        log_index=0,
+        transaction_index=0,
     )
-
-
-@pytest.mark.asyncio
-async def test_csm_initialized_side_effect_switches_from_v2_to_v3():
-    switched_versions: list[int] = []
-    adapter = SimpleNamespace(
-        csm_version=2,
-        addresses=SimpleNamespace(module="0x0000000000000000000000000000000000000abc"),
-    )
-
-    async def switch_csm_version(csm_version: int) -> None:
-        switched_versions.append(csm_version)
-
-    processor = CsmInitializedVersionSwitchProcessor(
-        cast(CommunityModuleAdapter, adapter),
-        switch_csm_version,
-    )
-
-    await processor.process_event(
-        _event(
-            "Initialized",
-            {"version": 3},
-            "0x0000000000000000000000000000000000000abc",
-        )
-    )
-
-    assert switched_versions == [3]
-
-
-@pytest.mark.asyncio
-async def test_csm_initialized_side_effect_ignores_non_matching_events():
-    switched_versions: list[int] = []
-    adapter = SimpleNamespace(
-        csm_version=2,
-        addresses=SimpleNamespace(module="0x0000000000000000000000000000000000000abc"),
-    )
-
-    async def switch_csm_version(csm_version: int) -> None:
-        switched_versions.append(csm_version)
-
-    processor = CsmInitializedVersionSwitchProcessor(
-        cast(CommunityModuleAdapter, adapter),
-        switch_csm_version,
-    )
-
-    await processor.process_event(
-        _event(
-            "Initialized",
-            {"version": 2},
-            "0x0000000000000000000000000000000000000abc",
-        )
-    )
-    await processor.process_event(
-        _event(
-            "Initialized",
-            {"version": 3},
-            "0x0000000000000000000000000000000000000def",
-        )
-    )
-
-    assert switched_versions == []
 
 
 @pytest.mark.asyncio
@@ -130,3 +71,19 @@ async def test_node_operator_count_side_effect_updates_count_cache_from_added_ev
     )
 
     assert remembered == [9]
+
+
+@pytest.mark.asyncio
+async def test_module_event_side_effects_exposes_raw_event_consumer_handle_event():
+    processor = SimpleNamespace(process_event=AsyncMock())
+    side_effects = ModuleEventSideEffects.__new__(ModuleEventSideEffects)
+    side_effects._processors = (processor,)
+    event = _event(
+        "AnyEvent",
+        {},
+        "0x0000000000000000000000000000000000000abc",
+    )
+
+    await side_effects.process_event(event)
+
+    processor.process_event.assert_awaited_once_with(event)

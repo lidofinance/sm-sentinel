@@ -1,8 +1,8 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
-from sentinel.models import Event
+from sentinel.models import EventNotification
 
 
 @dataclass
@@ -29,6 +29,4 @@ class NotificationPlan:
 
 
 class EventMessageEngine(Protocol):
-    async def get_notification_plan(self, event: Event) -> NotificationPlan | None: ...
-
-    def reconfigure(self, module_adapter: Any) -> None: ...
+    async def get_notification_plan(self, event: EventNotification) -> NotificationPlan | None: ...

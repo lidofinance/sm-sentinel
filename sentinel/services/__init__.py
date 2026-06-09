@@ -1,5 +1,11 @@
 """Long-lived services used by the CSM bot."""
 
-from .subscription import TelegramSubscription
+from .subscription import (
+    ModuleRuntime,
+    ModuleRuntimeSupervisor,
+)
 
-__all__ = ["TelegramSubscription"]
+__all__ = [
+    "ModuleRuntime",
+    "ModuleRuntimeSupervisor",
+]

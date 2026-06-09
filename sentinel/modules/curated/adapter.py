@@ -227,6 +227,7 @@ class CuratedModuleAdapter(BaseModuleAdapter):
         )
 
     async def warm_up(self) -> None:
+        logger.info("Prefetching Curated node operator labels into cache")
         await self.node_operator_options()
 
     def remember_node_operator_label(self, operator_id: int, name: str | None) -> None:
@@ -300,3 +301,15 @@ class CuratedModuleAdapter(BaseModuleAdapter):
         from sentinel.modules.curated.events import CuratedEventMessages
 
         return CuratedEventMessages(self)
+
+    def event_aggregators(self):
+        from sentinel.modules.aggregation import (
+            OperatorGroupChangeAggregator,
+            node_operator_aggregators_from_event_handlers,
+        )
+        from sentinel.modules.curated.events import CURATED_EVENTS_TO_FOLLOW
+
+        return (
+            *node_operator_aggregators_from_event_handlers(CURATED_EVENTS_TO_FOLLOW),
+            OperatorGroupChangeAggregator(),
+        )
