@@ -10,7 +10,7 @@ permissions:
 env:
   APP: sm-sentinel
   LEGACY_APP: csm-sentinel
-  REGISTRY: harbor.dev.k8s-dev.org
+  REGISTRY: registry.dev.k8s-dev.org
   REPOSITORY: team-csm
   REGISTRY_USER: robot$team-csm-rw
 
