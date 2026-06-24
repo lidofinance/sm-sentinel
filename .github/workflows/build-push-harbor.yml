@@ -9,7 +9,6 @@ permissions:
 
 env:
   APP: sm-sentinel
-  LEGACY_APP: csm-sentinel
   REGISTRY: registry.dev.k8s-dev.org
   REPOSITORY: team-csm
   REGISTRY_USER: robot$team-csm-rw
@@ -65,9 +64,7 @@ jobs:
           context: .
           builder: ${{ steps.buildx.outputs.name }}
           push: true
-          tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ env.REGISTRY }}/${{ env.REPOSITORY }}/${{ env.LEGACY_APP }}:dev
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
