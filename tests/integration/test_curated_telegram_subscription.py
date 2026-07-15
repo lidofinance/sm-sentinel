@@ -376,3 +376,18 @@ async def test_curated_process_blocks_bond_lock_period_changed(anvil_launcher):
         ),
         anvil_launcher=anvil_launcher,
     )
+
+
+async def test_curated_process_blocks_target_validators_count_changed(anvil_launcher):
+    await _exercise_curated_event(
+        event_name="TargetValidatorsCountChanged",
+        fork_block=3219085,
+        expected_markdown=(
+            "🚨 *Target validators count changed*\n\n"
+            "The limit has been set to 180\\.\n"
+            "4 keys above the limit will be requested to exit immediately\\.\n\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
+            "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
+        ),
+        anvil_launcher=anvil_launcher,
+    )

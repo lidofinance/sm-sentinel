@@ -238,6 +238,17 @@ async def test_process_blocks_key_removal_charge_applied(anvil_launcher, via_sub
     )
 
 
+async def test_process_blocks_multi_key_removal_charge_applied(anvil_launcher, via_subscription):
+    await _exercise_event(
+        event_name="KeyRemovalChargeApplied",
+        fork_block=2678868,
+        tx_hash="0xaaf613038cc219a1f0f15d53488a4a80e1a52ae3ddbb52b6ae0ff8e3639ccb9e",
+        expected_markdown="🔑 *Key removal charge applied*\n\nAmount of charge: `0\\.16 ether`\n\nnodeOperatorId: 373\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
+        anvil_launcher=anvil_launcher,
+        via_subscription=via_subscription,
+    )
+
+
 async def test_process_blocks_node_operator_manager_address_change_proposed(
     anvil_launcher, via_subscription
 ):
@@ -436,7 +447,7 @@ async def test_process_blocks_target_validators_count_changed(anvil_launcher, vi
         event_name="TargetValidatorsCountChanged",
         fork_block=1084974,
         tx_hash="0xf920fb581bc3e69d5db7066aa905fbe8b3e62ca688cfb1c7b9dc2585f0652221",
-        expected_markdown="🚨 *Target validators count changed*\n\nThe limit has been set to zero\\.\nAll keys will be requested to exit immediately\\.\n\nnodeOperatorId: 242\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
+        expected_markdown="🚨 *Target validators count changed*\n\nThe limit has been set to zero\\.\n1 key will be requested to exit immediately\\.\n\nnodeOperatorId: 242\n[Transaction](https://etherscan.io/tx/0xdeadbeef)",
         anvil_launcher=anvil_launcher,
         via_subscription=via_subscription,
     )

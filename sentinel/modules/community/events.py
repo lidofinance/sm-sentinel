@@ -142,18 +142,21 @@ class CommunityEventMessages(BaseModule):
 
     @register_event("TargetValidatorsCountChanged")
     async def target_validators_count_changed(self, event: EventNotification):
-        node_operator = await self.module.functions.getNodeOperator(
+        node_operator_before = await self.module.functions.getNodeOperator(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block - 1)
-        mode_before = node_operator.targetLimitMode
-        limit_before = node_operator.targetLimit
+        node_operator = await self.module.functions.getNodeOperator(
+            event.args["nodeOperatorId"]
+        ).call(block_identifier=event.block)
+        active_validators_count = node_operator.totalDepositedKeys - node_operator.totalExitedKeys
 
         template = self._require_message_template(event.event)
         return template(
-            mode_before,
-            limit_before,
+            node_operator_before.targetLimitMode,
+            node_operator_before.targetLimit,
             event.args["targetLimitMode"],
             event.args["targetValidatorsCount"],
+            active_validators_count,
         ) + await self.notification_footer(event)
 
     @register_event("Initialized")
