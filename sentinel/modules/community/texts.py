@@ -572,10 +572,9 @@ def key_allocated_balance_changed(key_index, new_total):
 
 
 @register_event_message("KeyRemovalChargeApplied")
-def key_removal_charge_applied(amount):
-    return markdown(
-        "🔑 ", Bold("Key removal charge applied"), nl(), "Amount of charge: ", Code(amount)
-    )
+def key_removal_charge_applied(amount, *, total: bool):
+    label = "Amount of charge: " if total else "Charge per key: "
+    return markdown("🔑 ", Bold("Key removal charge applied"), nl(), label, Code(amount))
 
 
 @register_event_message("BondCurveSet")
@@ -874,7 +873,15 @@ def distribution_data_updated(
 
 
 @register_event_message("TargetValidatorsCountChanged")
-def target_validators_count_changed(mode_before, limit_before, mode_after, limit_after):
+def target_validators_count_changed(
+    mode_before: int,
+    limit_before: int,
+    mode_after: int,
+    limit_after: int,
+    active_validators_count: int,
+):
+    keys_above_limit = max(active_validators_count - limit_after, 0)
+    key_word = "key" if keys_above_limit == 1 else "keys"
     match (mode_before, limit_before, mode_after, limit_after):
         case (_, _, 1, 0):
             return markdown(
@@ -883,7 +890,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
                 nl(),
                 "The limit has been set to zero.",
                 nl(1),
-                "All keys will be requested to exit first.",
+                f"{keys_above_limit} {key_word} will be requested to exit first.",
             )
         case (_, _, 2, 0):
             return markdown(
@@ -892,7 +899,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
                 nl(),
                 "The limit has been set to zero.",
                 nl(1),
-                "All keys will be requested to exit immediately.",
+                f"{keys_above_limit} {key_word} will be requested to exit immediately.",
             )
         case (1, _, 1, limit_after) if limit_after < limit_before:
             return markdown(
@@ -901,7 +908,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
                 nl(),
                 f"The limit has been decreased from {limit_before} to {limit_after}.",
                 nl(1),
-                f"{limit_before - limit_after} more key(s) will be requested to exit first.",
+                f"{keys_above_limit} {key_word} above the limit will be requested to exit first.",
             )
         case (2, _, 2, limit_after) if limit_after < limit_before:
             return markdown(
@@ -910,7 +917,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
                 nl(),
                 f"The limit has been decreased from {limit_before} to {limit_after}.",
                 nl(1),
-                f"{limit_before - limit_after} more key(s) will be requested to exit immediately.",
+                f"{keys_above_limit} {key_word} above the limit will be requested to exit immediately.",
             )
         case (_, _, 1, _):
             return markdown(
@@ -919,7 +926,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
                 nl(),
                 f"The limit has been set to {limit_after}.",
                 nl(1),
-                f"{limit_after} keys will be requested to exit first.",
+                f"{keys_above_limit} {key_word} above the limit will be requested to exit first.",
             )
         case (_, _, 2, _):
             return markdown(
@@ -928,7 +935,7 @@ def target_validators_count_changed(mode_before, limit_before, mode_after, limit
                 nl(),
                 f"The limit has been set to {limit_after}.",
                 nl(1),
-                f"{limit_after} keys will be requested to exit immediately.",
+                f"{keys_above_limit} {key_word} above the limit will be requested to exit immediately.",
             )
         case (_, _, 0, _):
             return markdown(

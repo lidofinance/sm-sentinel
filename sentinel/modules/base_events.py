@@ -63,10 +63,37 @@ class BaseModule(EventMessageEngineBase):
         curve_id = await self.accounting.functions.getBondCurveId(
             event.args["nodeOperatorId"]
         ).call(block_identifier=event.block)
-        amount = await self.parametersRegistry.functions.getKeyRemovalCharge(curve_id).call(
+        charge_per_key = await self.parametersRegistry.functions.getKeyRemovalCharge(curve_id).call(
             block_identifier=event.block
         )
-        return template(humanize_wei(amount)) + await self.notification_footer(event)
+        removed_key_logs = await self.module.events.SigningKeyRemoved().get_logs(
+            from_block=event.block,
+            to_block=event.block,
+        )
+        removed_keys_count = sum(
+            log["transactionIndex"] == event.primary_event.transaction_index
+            and log["args"]["nodeOperatorId"] == event.args["nodeOperatorId"]
+            for log in removed_key_logs
+        )
+        if removed_keys_count == 0:
+            logger.warning(
+                "No SigningKeyRemoved logs found for key removal charge",
+                extra={
+                    "block": event.block,
+                    "node_operator_id": event.args["nodeOperatorId"],
+                    "transaction_hash": event.tx.hex(),
+                },
+            )
+            return template(
+                humanize_wei(charge_per_key),
+                total=False,
+            ) + await self.notification_footer(event)
+
+        total_charge = charge_per_key * removed_keys_count
+        return template(
+            humanize_wei(total_charge),
+            total=True,
+        ) + await self.notification_footer(event)
 
     async def notification_footer(self, event: EventNotification) -> str:
         source_events = event.source_events

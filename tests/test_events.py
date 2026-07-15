@@ -59,6 +59,16 @@ class _FakeCall:
         return self.value
 
 
+class _FakeEventLogs:
+    def __init__(self, logs: list[dict]):
+        self.logs = logs
+        self.calls: list[dict] = []
+
+    async def get_logs(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.logs
+
+
 class _FakeOperatorWeightsCall:
     def __init__(
         self,
@@ -437,122 +447,183 @@ async def test_fee_splits_set_reads_previous_fee_splits_at_previous_block():
 
 
 def test_limit_set_mode_1():
-    result = target_validators_count_changed(0, 0, 1, 10)
+    result = target_validators_count_changed(0, 0, 1, 10, 15)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to 10\."
         "\n"
-        r"10 keys will be requested to exit first\."
+        r"5 keys above the limit will be requested to exit first\."
     )
     assert result == expected
 
 
 def test_limit_set_mode_2():
-    result = target_validators_count_changed(0, 0, 2, 10)
+    result = target_validators_count_changed(0, 0, 2, 180, 200)
     expected = (
         "🚨 *Target validators count changed*\n\n"
-        r"The limit has been set to 10\."
+        r"The limit has been set to 180\."
         "\n"
-        r"10 keys will be requested to exit immediately\."
+        r"20 keys above the limit will be requested to exit immediately\."
+    )
+    assert result == expected
+
+
+def test_limit_set_above_active_validators_count():
+    result = target_validators_count_changed(0, 0, 2, 180, 170)
+    expected = (
+        "🚨 *Target validators count changed*\n\n"
+        r"The limit has been set to 180\."
+        "\n"
+        r"0 keys above the limit will be requested to exit immediately\."
     )
     assert result == expected
 
 
 def test_limit_set_mode_2_from_1():
-    result = target_validators_count_changed(1, 5, 2, 10)
+    result = target_validators_count_changed(1, 5, 2, 10, 15)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to 10\."
         "\n"
-        r"10 keys will be requested to exit immediately\."
+        r"5 keys above the limit will be requested to exit immediately\."
     )
     assert result == expected
 
 
 def test_limit_set_mode_1_from_2():
-    result = target_validators_count_changed(2, 5, 1, 10)
+    result = target_validators_count_changed(2, 5, 1, 10, 15)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to 10\."
+        "\n"
+        r"5 keys above the limit will be requested to exit first\."
+    )
+    assert result == expected
+
+
+def test_limit_decreased_mode_1():
+    result = target_validators_count_changed(1, 10, 1, 3, 10)
+    expected = (
+        "🚨 *Target validators count changed*\n\n"
+        r"The limit has been decreased from 10 to 3\."
+        "\n"
+        r"7 keys above the limit will be requested to exit first\."
+    )
+    assert result == expected
+
+
+def test_limit_decreased_mode_2():
+    result = target_validators_count_changed(2, 10, 2, 3, 10)
+    expected = (
+        "🚨 *Target validators count changed*\n\n"
+        r"The limit has been decreased from 10 to 3\."
+        "\n"
+        r"7 keys above the limit will be requested to exit immediately\."
+    )
+    assert result == expected
+
+
+def test_limit_to_zero_exit_first():
+    result = target_validators_count_changed(1, 10, 1, 0, 10)
+    expected = (
+        "🚨 *Target validators count changed*\n\n"
+        r"The limit has been set to zero\."
         "\n"
         r"10 keys will be requested to exit first\."
     )
     assert result == expected
 
 
-def test_limit_decreased_mode_1():
-    result = target_validators_count_changed(1, 10, 1, 3)
-    expected = (
-        "🚨 *Target validators count changed*\n\n"
-        r"The limit has been decreased from 10 to 3\."
-        "\n"
-        r"7 more key\(s\) will be requested to exit first\."
-    )
-    assert result == expected
-
-
-def test_limit_decreased_mode_2():
-    result = target_validators_count_changed(2, 10, 2, 3)
-    expected = (
-        "🚨 *Target validators count changed*\n\n"
-        r"The limit has been decreased from 10 to 3\."
-        "\n"
-        r"7 more key\(s\) will be requested to exit immediately\."
-    )
-    assert result == expected
-
-
-def test_limit_to_zero_exit_first():
-    result = target_validators_count_changed(1, 10, 1, 0)
-    expected = (
-        "🚨 *Target validators count changed*\n\n"
-        r"The limit has been set to zero\."
-        "\n"
-        r"All keys will be requested to exit first\."
-    )
-    assert result == expected
-
-
 def test_limit_to_zero_exit_immediately():
-    result = target_validators_count_changed(2, 10, 2, 0)
+    result = target_validators_count_changed(2, 10, 2, 0, 10)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to zero\."
         "\n"
-        r"All keys will be requested to exit immediately\."
+        r"10 keys will be requested to exit immediately\."
     )
     assert result == expected
 
 
 def test_limit_to_zero_exit_first_no_previous_limit():
-    result = target_validators_count_changed(0, 0, 1, 0)
+    result = target_validators_count_changed(0, 0, 1, 0, 10)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to zero\."
         "\n"
-        r"All keys will be requested to exit first\."
+        r"10 keys will be requested to exit first\."
     )
     assert result == expected
 
 
 def test_limit_to_zero_exit_immediately_no_previous_limit():
-    result = target_validators_count_changed(0, 0, 2, 0)
+    result = target_validators_count_changed(0, 0, 2, 0, 10)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to zero\."
         "\n"
-        r"All keys will be requested to exit immediately\."
+        r"10 keys will be requested to exit immediately\."
     )
     assert result == expected
 
 
 def test_limit_unset_mode_zero():
-    result = target_validators_count_changed(1, 10, 0, 0)
+    result = target_validators_count_changed(1, 10, 0, 0, 10)
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to zero\. No keys will be requested to exit\."
     )
     assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_key_removal_charge_is_multiplied_by_removed_keys_count():
+    from sentinel.models import Event
+    from sentinel.modules.community.events import CommunityEventMessages
+
+    tx = HexBytes("0xdeadbeef")
+    removed_key_logs = _FakeEventLogs(
+        [
+            {"transactionIndex": 5, "args": {"nodeOperatorId": 42}},
+            {"transactionIndex": 5, "args": {"nodeOperatorId": 42}},
+            {"transactionIndex": 5, "args": {"nodeOperatorId": 42}},
+            {"transactionIndex": 8, "args": {"nodeOperatorId": 42}},
+            {"transactionIndex": 5, "args": {"nodeOperatorId": 7}},
+        ]
+    )
+    event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
+    event_messages.module = SimpleNamespace(
+        events=SimpleNamespace(SigningKeyRemoved=lambda: removed_key_logs)
+    )
+    event_messages.accounting = SimpleNamespace(
+        functions=SimpleNamespace(getBondCurveId=lambda _node_operator_id: _FakeCall(3))
+    )
+    event_messages.parametersRegistry = SimpleNamespace(
+        functions=SimpleNamespace(
+            getKeyRemovalCharge=lambda _curve_id: _FakeCall(20_000_000_000_000_000)
+        )
+    )
+
+    async def notification_footer(_event):
+        return ""
+
+    event_messages.notification_footer = notification_footer
+    event = Event(
+        event="KeyRemovalChargeApplied",
+        args={"nodeOperatorId": 42},
+        block=123,
+        tx=tx,
+        address="0x0000000000000000000000000000000000000000",
+        log_index=0,
+        transaction_index=5,
+    )
+
+    message = await CommunityEventMessages.key_removal_charge_applied(
+        event_messages, _notification(event)
+    )
+
+    assert "Amount of charge: `0\\.06 ether`" in message
+    assert removed_key_logs.calls == [{"from_block": 123, "to_block": 123}]
 
 
 @pytest.mark.asyncio
