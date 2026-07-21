@@ -163,10 +163,7 @@ class BaseModule(EventMessageEngineBase):
         template = self._require_message_template(event.event)
         return template(humanize_wei(event.args["amount"])) + await self.notification_footer(event)
 
-    async def expired_bond_lock_removed(self, event: EventNotification):
-        # TODO: add a time-based notification for expired bond locks that can be
-        # unlocked. This is not event-based, so it needs a separate scheduled scan
-        # rather than a quick event handler change.
+    async def bond_lock_removed(self, event: EventNotification):
         template = self._require_message_template(event.event)
         return template() + await self.notification_footer(event)
 

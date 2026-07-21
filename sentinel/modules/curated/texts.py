@@ -150,9 +150,6 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition("BondDebtIncreased", "- 🚨 Bond debt increased", EventGroup.PENALTIES),
     EventDefinition("BondDebtCovered", "- ✅ Bond debt covered", EventGroup.PENALTIES),
     EventDefinition(
-        "ExpiredBondLockRemoved", "- ✅ Expired bond lock removed", EventGroup.PENALTIES
-    ),
-    EventDefinition(
         "StrikesPenaltyProcessed", "- 🚨 Strikes penalty processed", EventGroup.PENALTIES
     ),
     EventDefinition(
@@ -198,7 +195,7 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition(
         "DistributionLogUpdated", "- 📈 New rewards distributed", EventGroup.COMMON_CURATED
     ),
-    EventDefinition("Initialized", "- 🎉 Curated Module launched", EventGroup.COMMON_CURATED),
+    EventDefinition("Resumed", "- 🎉 Curated Module launched", EventGroup.COMMON_CURATED),
 ]
 
 CURATED_EVENT_DESCRIPTIONS = {event.name: event.description for event in CURATED_EVENT_CATALOG}
@@ -623,16 +620,6 @@ def bond_debt_covered(amount):
     return markdown("✅ ", Bold("Bond debt covered"), nl(), "Covered amount: ", Code(amount))
 
 
-@register_event_message("ExpiredBondLockRemoved")
-def expired_bond_lock_removed():
-    return markdown(
-        "✅ ",
-        Bold("Expired bond lock removed"),
-        nl(),
-        "More bond may now be available for normal operations.",
-    )
-
-
 @register_event_message("GeneralDelayedPenaltyReported")
 def general_delayed_penalty_reported(amount, additional_fine, details):
     return markdown(
@@ -872,8 +859,9 @@ def distribution_data_updated(
     return base_message.as_markdown()
 
 
-@register_event_message("Initialized")
-def initialized():
+# TODO: Remove the temporary release notification after the CMv2 launch.
+@register_event_message("Resumed")
+def resumed():
     cfg = get_config()
     return markdown(
         "🎉 ",

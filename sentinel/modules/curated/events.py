@@ -248,10 +248,12 @@ class CuratedEventMessages(BaseModule):
             key, key_url, humanize_wei(event.args["delayFee"])
         ) + await self.notification_footer(event)
 
-    @register_event("Initialized")
-    async def initialized(self, event: EventNotification):
+    # TODO: Remove the temporary release notification after the CMv2 launch.
+    @register_event("Resumed")
+    async def resumed(self, event: EventNotification):
         if event.address.lower() != self.module_address.lower():
             return None
+        await self.module_adapter.refresh_staking_module_id()
         template = self._require_message_template(event.event)
         return template() + await self.notification_footer(event)
 
@@ -567,7 +569,6 @@ register_event("CustomRewardsClaimerSet")(CuratedEventMessages.custom_rewards_cl
 register_event("FeeSplitsSet")(CuratedEventMessages.fee_splits_set)
 register_event("BondDebtIncreased")(CuratedEventMessages.bond_debt_increased)
 register_event("BondDebtCovered")(CuratedEventMessages.bond_debt_covered)
-register_event("ExpiredBondLockRemoved")(CuratedEventMessages.expired_bond_lock_removed)
 register_event("GeneralDelayedPenaltyReported")(
     CuratedEventMessages.general_delayed_penalty_reported
 )

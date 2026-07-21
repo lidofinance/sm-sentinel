@@ -51,14 +51,14 @@ CURATED_EVENTS = frozenset(
         "GeneralDelayedPenaltyCompensated",
         "ValidatorSlashingReported",
         "ValidatorWithdrawn",
-        "Initialized",
+        # TODO: Remove the temporary release notification after the CMv2 launch.
+        "Resumed",
         # CSAccounting
         "BondCurveSet",
         "CustomRewardsClaimerSet",
         "FeeSplitsSet",
         "BondDebtIncreased",
         "BondDebtCovered",
-        "ExpiredBondLockRemoved",
         "BondDepositedETH",
         "BondDepositedStETH",
         "BondDepositedWstETH",
@@ -261,9 +261,6 @@ class CuratedModuleAdapter(BaseModuleAdapter):
         if not name:
             return f"#{operator_id}"
         return f"#{operator_id} - {name}"
-
-    def staking_module_id_matches(self, event) -> bool:
-        return event.args["stakingModuleId"] == self.addresses.staking_module_id
 
     def event_sources(self) -> tuple[EventSource, ...]:
         return (

@@ -8,6 +8,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 
+from sentinel.app.build_info import load_build_info
+
 logger = logging.getLogger(__name__)
 
 HEALTH_HEARTBEAT_INTERVAL_SECONDS = 5.0
@@ -171,8 +173,10 @@ class HealthServer:
         *,
         host: str = DEFAULT_HEALTHCHECK_HOST,
         port: int = DEFAULT_HEALTHCHECK_PORT,
+        build_info: dict[str, str] | None = None,
     ) -> None:
         self._state = state
+        self._build_info = build_info or load_build_info()
         self._server = ThreadingHTTPServer((host, port), self._build_handler())
         self._server.daemon_threads = True
         self._thread = threading.Thread(
@@ -195,9 +199,14 @@ class HealthServer:
 
     def _build_handler(self):
         state = self._state
+        build_info = self._build_info
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
+                if self.path == "/build-info.json":
+                    self._send_json(HTTPStatus.OK, build_info)
+                    return
+
                 snapshot = state.snapshot()
                 if self.path == "/startup":
                     ok = snapshot.startup_complete
@@ -209,7 +218,8 @@ class HealthServer:
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
 
-                payload = json.dumps(
+                self._send_json(
+                    HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE,
                     {
                         "startup_complete": snapshot.startup_complete,
                         "ready": snapshot.ready,
@@ -232,11 +242,14 @@ class HealthServer:
                             if snapshot.last_subscription_ok_age_seconds is None
                             else round(snapshot.last_subscription_ok_age_seconds, 3)
                         ),
-                    }
-                ).encode()
+                    },
+                )
 
-                self.send_response(HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
+            def _send_json(self, status: HTTPStatus, body: dict) -> None:
+                payload = json.dumps(body).encode()
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)

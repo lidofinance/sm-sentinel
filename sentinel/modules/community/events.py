@@ -199,7 +199,7 @@ register_event("CustomRewardsClaimerSet")(CommunityEventMessages.custom_rewards_
 register_event("FeeSplitsSet")(CommunityEventMessages.fee_splits_set)
 register_event("BondDebtIncreased")(CommunityEventMessages.bond_debt_increased)
 register_event("BondDebtCovered")(CommunityEventMessages.bond_debt_covered)
-register_event("ExpiredBondLockRemoved")(CommunityEventMessages.expired_bond_lock_removed)
+register_event("BondLockRemoved")(CommunityEventMessages.bond_lock_removed)
 register_event("GeneralDelayedPenaltyReported")(
     CommunityEventMessages.general_delayed_penalty_reported
 )

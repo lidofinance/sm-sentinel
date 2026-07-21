@@ -1,0 +1,35 @@
+name: Build and push SM Sentinel to production
+
+run-name: Build and push SM Sentinel:${{ github.event.release.tag_name }} to production
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be a stable SemVer tag like v1.2.3; got '$RELEASE_TAG'." >&2
+            exit 1
+          fi
+
+  build-and-push:
+    needs: validate-release
+    uses: lidofinance/actions/.github/workflows/k8s-build-push-harbor.yml@c7b5b6c5d8013046347d728d748fa741eb214e28
+    with:
+      tag: ${{ github.event.release.tag_name }}
+      registry: registry.prod.k8s-prod.org
+      registry_username: ${{ vars.REGISTRY_USERNAME }}
+      image: team-csm/sm-sentinel
+      environment: harbor_prod_release
+    secrets:
+      registry_token: ${{ secrets.HARBOR_PROD_TOKEN }}

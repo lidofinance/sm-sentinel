@@ -157,8 +157,8 @@ COMMUNITY_EVENT_CATALOG: list[EventDefinition] = [
         group_title=EventGroup.SLASHING_AND_STEALING,
     ),
     EventDefinition(
-        name="ExpiredBondLockRemoved",
-        description="- ✅ Expired bond lock removed",
+        name="BondLockRemoved",
+        description="- ✅ Bond lock removed",
         group_title=EventGroup.SLASHING_AND_STEALING,
     ),
     EventDefinition(
@@ -547,13 +547,13 @@ def fee_splits_set(fee_splits, previous_fee_splits=None):
     )
 
 
-@register_event_message("ExpiredBondLockRemoved")
-def expired_bond_lock_removed():
+@register_event_message("BondLockRemoved")
+def bond_lock_removed():
     return markdown(
         "✅ ",
-        Bold("Expired bond lock removed"),
+        Bold("Bond lock removed"),
         nl(),
-        "More bond may now be available for normal operations.",
+        "Previously locked bond is no longer retained.",
     )
 
 

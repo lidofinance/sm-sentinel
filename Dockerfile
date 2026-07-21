@@ -13,4 +13,9 @@ RUN uv sync --locked
 
 COPY . /app
 
+ARG BUILD_VERSION=dev
+ARG BUILD_BRANCH=unknown
+ARG BUILD_COMMIT=unknown
+RUN python -c 'import json, pathlib, sys; pathlib.Path("build-info.json").write_text(json.dumps({"version": sys.argv[1], "branch": sys.argv[2], "commit": sys.argv[3]}) + "\n")' "$BUILD_VERSION" "$BUILD_BRANCH" "$BUILD_COMMIT"
+
 CMD ["python", "-m", "sentinel.main"]

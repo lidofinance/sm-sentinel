@@ -93,10 +93,10 @@ async def _exercise_curated_event(
         await harness.disconnect()
 
 
-async def test_curated_process_blocks_initialized(anvil_launcher):
+async def test_curated_process_blocks_resumed_release(anvil_launcher):
     await _exercise_curated_event(
-        event_name="Initialized",
-        fork_block=2662652,
+        event_name="Resumed",
+        fork_block=2722011,
         expected_markdown=(
             "🎉 *Curated Module is live\\!*\n\n"
             "Check the [Curated Module UI](https://lido.fi) "
@@ -179,17 +179,6 @@ async def test_curated_process_blocks_distribution_log_updated(anvil_launcher):
             "to check new claimable rewards\\.\n\n"
             "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
         ),
-        anvil_launcher=anvil_launcher,
-    )
-
-
-async def test_curated_process_blocks_ignores_meta_registry_initialized(
-    anvil_launcher,
-):
-    await _exercise_curated_event(
-        event_name="Initialized",
-        fork_block=2662655,
-        expected_markdown=None,
         anvil_launcher=anvil_launcher,
     )
 

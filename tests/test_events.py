@@ -8,7 +8,7 @@ from sentinel.modules.community.texts import (
     bond_debt_covered,
     bond_debt_increased,
     custom_rewards_claimer_set,
-    expired_bond_lock_removed,
+    bond_lock_removed,
     fee_splits_set,
     key_allocated_balance_changed,
     target_validators_count_changed,
@@ -223,6 +223,7 @@ class _FakeCuratedAdapter:
         )
         self._notifiable_events = notifiable_events or set()
         self.remembered_labels: list[tuple[int, str | None]] = []
+        self.staking_module_id_refreshes = 0
 
     def catalog_events(self):
         return self._notifiable_events
@@ -232,6 +233,9 @@ class _FakeCuratedAdapter:
 
     def remember_node_operator_label(self, operator_id: int, name: str | None) -> None:
         self.remembered_labels.append((operator_id, name))
+
+    async def refresh_staking_module_id(self) -> None:
+        self.staking_module_id_refreshes += 1
 
 
 def _set_event_config():
@@ -265,7 +269,7 @@ def test_new_v3_message_templates_render_core_fields():
         "0x0000000000000000000000000000000000000000"
     )
 
-    assert "Expired bond lock removed" in expired_bond_lock_removed()
+    assert "Bond lock removed" in bond_lock_removed()
     assert "Key balance increased" in key_allocated_balance_changed(7, "3 ether")
     assert "Key index: `7`" in key_allocated_balance_changed(7, "3 ether")
     assert "New allocated balance: `3 ether`" in key_allocated_balance_changed(7, "3 ether")
@@ -979,6 +983,34 @@ async def test_curated_get_notification_plan_uses_inherited_base_handler():
     assert "nodeOperatorId: 42" in plan.broadcast
     assert module.node_operator_calls == [42]
     assert module.node_operator_call_objects[0].calls == [{"block_identifier": 122}]
+
+
+@pytest.mark.asyncio
+async def test_curated_resumed_builds_temporary_release_broadcast():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    adapter = _FakeCuratedAdapter(notifiable_events={"Resumed"})
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="Resumed",
+        args={},
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address=adapter.addresses.module,
+        log_index=0,
+        transaction_index=0,
+    )
+
+    plan = await event_messages.get_notification_plan(_notification(event))
+
+    assert adapter.staking_module_id_refreshes == 1
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids is None
+    assert "Curated Module is live" in plan.broadcast
+    assert "Transaction" in plan.broadcast
 
 
 @pytest.mark.asyncio
