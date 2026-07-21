@@ -253,6 +253,7 @@ class CuratedEventMessages(BaseModule):
     async def resumed(self, event: EventNotification):
         if event.address.lower() != self.module_address.lower():
             return None
+        await self.module_adapter.refresh_staking_module_id()
         template = self._require_message_template(event.event)
         return template() + await self.notification_footer(event)
 
