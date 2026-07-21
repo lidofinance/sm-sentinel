@@ -33,7 +33,12 @@ Also consider privacy concerns when using a public instance.
 
 First, you need to create a bot on Telegram. You can do this by talking to the [BotFather](https://t.me/botfather).
 
-Then, you need to create a `.env` by copying one of the `.env.sample.ethereum` or `.env.sample.hoodi` files and filling in the required fields:
+Then, create a `.env` by copying the sample matching the module and network you want to monitor:
+
+- CSM: `.env.sample.ethereum` or `.env.sample.hoodi`
+- Curated Module: `.env.sample.curated.ethereum` or `.env.sample.curated.hoodi`
+
+Fill in the required fields:
 - `TOKEN`: The token you received from the BotFather
 - `WEB3_SOCKET_PROVIDER`: The websocket provider for your node. 
 Preferably, use your own local node, for example the execution node you already run for validators.
@@ -41,7 +46,7 @@ But it is also possible to use a public node of any web3 providers.
 - `MODULE_ADDRESS`: The staking module address to monitor. Use the CSM address for a CSM instance or the Curated Module address for a Curated instance.
 - `MODULE_UI_URL`: Optional URL used in notification links. Use the matching CSM or Curated Module UI.
 
-All other fields are pre-filled with the CSM contracts from the corresponding network. For a Curated instance, update at least `MODULE_ADDRESS` and `MODULE_UI_URL`; dependent contract addresses, module type, staking module ID, and MetaRegistry address are discovered on startup.
+All other fields are pre-filled for the selected module and network. Dependent contract addresses, module type, staking module ID, and MetaRegistry address are discovered on startup.
 
 Run SM Sentinel using Docker compose:
 
