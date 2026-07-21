@@ -7,6 +7,7 @@ from typing import Any, TYPE_CHECKING
 
 from telegram.ext import ContextTypes
 
+from sentinel.app.application import SentinelApplication
 from sentinel.app.storage import BotStorage, ChatStorage
 
 if TYPE_CHECKING:
@@ -25,9 +26,9 @@ class BotContext(ContextTypes.DEFAULT_TYPE):
     @property
     def runtime(self) -> "BotRuntime":
         if self._runtime is None:
-            from sentinel.app.runtime import get_runtime_from_application
-
-            self._runtime = get_runtime_from_application(self.application)
+            if not isinstance(self.application, SentinelApplication):
+                raise RuntimeError("Bot context requires a SentinelApplication")
+            self._runtime = self.application.runtime
         return self._runtime
 
     @property
