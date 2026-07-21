@@ -263,7 +263,7 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
         "BondDebtCovered",
         "CustomRewardsClaimerSet",
         "FeeSplitsSet",
-        "ExpiredBondLockRemoved",
+        "BondLockRemoved",
     }
     assert new_v3_events.isdisjoint(adapter_v2.catalog_events())
     assert new_v3_events.issubset(adapter_v3.catalog_events())

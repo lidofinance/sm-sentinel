@@ -59,7 +59,6 @@ CURATED_EVENTS = frozenset(
         "FeeSplitsSet",
         "BondDebtIncreased",
         "BondDebtCovered",
-        "ExpiredBondLockRemoved",
         "BondDepositedETH",
         "BondDepositedStETH",
         "BondDepositedWstETH",

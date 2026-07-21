@@ -568,7 +568,6 @@ register_event("CustomRewardsClaimerSet")(CuratedEventMessages.custom_rewards_cl
 register_event("FeeSplitsSet")(CuratedEventMessages.fee_splits_set)
 register_event("BondDebtIncreased")(CuratedEventMessages.bond_debt_increased)
 register_event("BondDebtCovered")(CuratedEventMessages.bond_debt_covered)
-register_event("ExpiredBondLockRemoved")(CuratedEventMessages.expired_bond_lock_removed)
 register_event("GeneralDelayedPenaltyReported")(
     CuratedEventMessages.general_delayed_penalty_reported
 )

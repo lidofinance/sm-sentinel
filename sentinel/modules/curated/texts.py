@@ -150,9 +150,6 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition("BondDebtIncreased", "- 🚨 Bond debt increased", EventGroup.PENALTIES),
     EventDefinition("BondDebtCovered", "- ✅ Bond debt covered", EventGroup.PENALTIES),
     EventDefinition(
-        "ExpiredBondLockRemoved", "- ✅ Expired bond lock removed", EventGroup.PENALTIES
-    ),
-    EventDefinition(
         "StrikesPenaltyProcessed", "- 🚨 Strikes penalty processed", EventGroup.PENALTIES
     ),
     EventDefinition(
@@ -621,16 +618,6 @@ def bond_debt_increased(amount):
 @register_event_message("BondDebtCovered")
 def bond_debt_covered(amount):
     return markdown("✅ ", Bold("Bond debt covered"), nl(), "Covered amount: ", Code(amount))
-
-
-@register_event_message("ExpiredBondLockRemoved")
-def expired_bond_lock_removed():
-    return markdown(
-        "✅ ",
-        Bold("Expired bond lock removed"),
-        nl(),
-        "More bond may now be available for normal operations.",
-    )
 
 
 @register_event_message("GeneralDelayedPenaltyReported")

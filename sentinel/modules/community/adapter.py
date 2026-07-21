@@ -68,7 +68,7 @@ COMMUNITY_V3_ONLY_EVENTS = frozenset(
         "BondDebtCovered",
         "CustomRewardsClaimerSet",
         "FeeSplitsSet",
-        "ExpiredBondLockRemoved",
+        "BondLockRemoved",
         "KeyAllocatedBalanceChanged",
         "ValidatorWithdrawn",
         "Initialized",

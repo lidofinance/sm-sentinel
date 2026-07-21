@@ -8,7 +8,7 @@ from sentinel.modules.community.texts import (
     bond_debt_covered,
     bond_debt_increased,
     custom_rewards_claimer_set,
-    expired_bond_lock_removed,
+    bond_lock_removed,
     fee_splits_set,
     key_allocated_balance_changed,
     target_validators_count_changed,
@@ -265,7 +265,7 @@ def test_new_v3_message_templates_render_core_fields():
         "0x0000000000000000000000000000000000000000"
     )
 
-    assert "Expired bond lock removed" in expired_bond_lock_removed()
+    assert "Bond lock removed" in bond_lock_removed()
     assert "Key balance increased" in key_allocated_balance_changed(7, "3 ether")
     assert "Key index: `7`" in key_allocated_balance_changed(7, "3 ether")
     assert "New allocated balance: `3 ether`" in key_allocated_balance_changed(7, "3 ether")
