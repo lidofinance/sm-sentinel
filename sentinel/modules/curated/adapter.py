@@ -262,9 +262,6 @@ class CuratedModuleAdapter(BaseModuleAdapter):
             return f"#{operator_id}"
         return f"#{operator_id} - {name}"
 
-    def staking_module_id_matches(self, event) -> bool:
-        return event.args["stakingModuleId"] == self.addresses.staking_module_id
-
     def event_sources(self) -> tuple[EventSource, ...]:
         return (
             EventSource("module", self.addresses.module),

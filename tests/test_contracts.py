@@ -1,5 +1,5 @@
-import pytest
 import web3.exceptions
+import pytest
 from unittest.mock import AsyncMock
 
 
@@ -14,7 +14,7 @@ def test_find_staking_module_id_success():
     assert _find_staking_module_id(modules, "0xABCDefAbcdefABCDefABCDEFabcdefABCDefAbcd") == 2
 
 
-def test_find_staking_module_id_failure():
+def test_find_staking_module_id_returns_none_when_module_is_not_registered():
     from sentinel.app.contracts import _find_staking_module_id
 
     modules = [
@@ -22,8 +22,7 @@ def test_find_staking_module_id_failure():
         (2, "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"),
     ]
 
-    with pytest.raises(RuntimeError):
-        _find_staking_module_id(modules, "0x0000000000000000000000000000000000000000")
+    assert _find_staking_module_id(modules, "0x0000000000000000000000000000000000000000") is None
 
 
 @pytest.mark.asyncio

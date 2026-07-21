@@ -125,10 +125,10 @@ class BaseContractAddresses:
     lido_locator: ChecksumAddress
     staking_router: ChecksumAddress
     vebo: ChecksumAddress
-    staking_module_id: int
+    staking_module_id: int | None
     module_type: ModuleType
 
-    def as_dict(self) -> dict[str, str | int]:
+    def as_dict(self) -> dict[str, str | int | None]:
         return {
             "module": self.module,
             "accounting": self.accounting,
@@ -147,7 +147,7 @@ class BaseContractAddresses:
 class CommunityContractAddresses(BaseContractAddresses):
     csm_version: int
 
-    def as_dict(self) -> dict[str, str | int]:
+    def as_dict(self) -> dict[str, str | int | None]:
         return BaseContractAddresses.as_dict(self) | {"csm_version": self.csm_version}
 
 
@@ -155,7 +155,7 @@ class CommunityContractAddresses(BaseContractAddresses):
 class CuratedContractAddresses(BaseContractAddresses):
     meta_registry: ChecksumAddress
 
-    def as_dict(self) -> dict[str, str | int]:
+    def as_dict(self) -> dict[str, str | int | None]:
         return BaseContractAddresses.as_dict(self) | {"meta_registry": self.meta_registry}
 
 
@@ -209,6 +209,13 @@ async def discover_contract_addresses(w3: AsyncWeb3, module_address: str) -> Con
     lido_locator_checksum = checksum(_ensure_address(lido_locator, "LIDO_LOCATOR()"))
     staking_router_checksum = checksum(_ensure_address(staking_router, "stakingRouter()"))
     vebo_checksum = checksum(_ensure_address(vebo, "validatorsExitBusOracle()"))
+
+    if module_id is None:
+        logger.warning(
+            "%s module is not registered in Staking Router yet; "
+            "VEBO events will be ignored until its module ID is discovered",
+            module_type.value,
+        )
 
     if module_type == ModuleType.CURATED:
         meta_registry = await _discover_meta_registry(w3, module_address)
@@ -279,13 +286,13 @@ async def _discover_meta_registry(w3: AsyncWeb3, module_address: str) -> str:
     return await curated_module.functions.META_REGISTRY().call()
 
 
-def _find_staking_module_id(modules: list[tuple], module_address: str) -> int:
+def _find_staking_module_id(modules: list[tuple], module_address: str) -> int | None:
     for module in modules:
         # getStakingModules returns tuple entries with well known layout
         module_id, staking_module_address = module[0], module[1]
         if staking_module_address.lower() == module_address.lower():
             return int(module_id)
-    raise RuntimeError("Failed to resolve staking module ID from staking router modules")
+    return None
 
 
 def log_discovered_addresses(addresses: ContractAddresses) -> None:

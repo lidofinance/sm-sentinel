@@ -60,6 +60,7 @@ class ModuleRuntime:
         self._advance_block(event.block)
 
     async def handle_block(self, block: Block) -> None:
+        await self.module_adapter.refresh_staking_module_id()
         self._advance_block(block.number)
 
     def resume_pending_aggregations(self) -> None:

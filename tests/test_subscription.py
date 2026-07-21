@@ -287,7 +287,10 @@ def _make_processing_harness(
     )
     side_effects = _FakeEventSideEffects()
     runtime = ModuleRuntime(
-        module_adapter=cast(object, SimpleNamespace()),
+        module_adapter=cast(
+            object,
+            SimpleNamespace(refresh_staking_module_id=AsyncMock()),
+        ),
         raw_subscription=cast(Subscription, SimpleNamespace()),
         storage=storage,
         event_messages=_make_event_messages(aggregation_group, event_names=event_names),
