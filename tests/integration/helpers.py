@@ -201,8 +201,13 @@ class _RecordingNotificationSink:
         )
         if event_messages is None:
             raise RuntimeError("Recording notification sink is not bound")
+        source_txs = list(dict.fromkeys(event.tx for event in notification.source_events))
+        stable_txs = {
+            tx: HexBytes("0xdeadbeef" if index == 0 else f"0x{index:08x}")
+            for index, tx in enumerate(source_txs)
+        }
         for event in notification.source_events:
-            event.tx = HexBytes("0xdeadbeef")
+            event.tx = stable_txs[event.tx]
         plan = await event_messages.get_notification_plan(notification)
         for event in notification.source_events:
             self.processed_events.append((event, plan))

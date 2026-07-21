@@ -462,6 +462,17 @@ def target_validators_count_changed(
                 nl(1),
                 f"{keys_above_limit} {key_word} above the limit will be requested to exit immediately.",
             )
+        case (2, limit_before, 0, _):
+            return markdown(
+                "✅ ",
+                Bold("Unsetting forced exit target limit"),
+                nl(),
+                "The forced target validator limit of ",
+                Code(str(limit_before)),
+                " has been removed.",
+                nl(1),
+                "No additional validators will be requested to exit.",
+            )
         case (_, _, 0, _):
             return markdown(
                 "🚨 ",
@@ -809,19 +820,55 @@ def strikes_penalty_processed(key, key_url, penalty):
 
 
 @register_event_message("ValidatorWithdrawn")
-def validator_withdrawn(key, key_url, balance, slashing_penalty):
+def validator_withdrawn(withdrawals):
+    if len(withdrawals) == 1:
+        withdrawal = withdrawals[0]
+        parts: list = [
+            "👀 ",
+            Bold("Validator withdrawal confirmed"),
+            nl(),
+            "Withdrawn key: ",
+            TextLink(withdrawal["key"], url=withdrawal["key_url"]),
+            nl(1),
+            "Exit balance: ",
+            Code(withdrawal["balance"]),
+        ]
+        if withdrawal["slashing_penalty"] not in {"0 ether", "0 wei"}:
+            parts.extend([nl(1), "Slashing penalty: ", Code(withdrawal["slashing_penalty"])])
+        return markdown(*parts)
+
     parts: list = [
         "👀 ",
-        Bold("Validator withdrawal confirmed"),
+        Bold("Validator withdrawals confirmed"),
         nl(),
-        "Withdrawn key: ",
-        TextLink(key, url=key_url),
+        "Withdrawn validators:",
         nl(1),
-        "Exit balance: ",
-        Code(balance),
     ]
-    if slashing_penalty not in {"0 ether", "0 wei"}:
-        parts.extend([nl(1), "Slashing penalty: ", Code(slashing_penalty)])
+    for index, withdrawal in enumerate(withdrawals, start=1):
+        if index > 1:
+            parts.append(nl(1))
+        parts.extend(
+            [
+                "- Validator ",
+                str(index),
+                ": ",
+                TextLink(
+                    _shorten_validator_key_for_link(withdrawal["key"]),
+                    url=withdrawal["key_url"],
+                ),
+                nl(1),
+                "  Exit balance: ",
+                Code(withdrawal["balance"]),
+            ]
+        )
+        if withdrawal["slashing_penalty"] not in {"0 ether", "0 wei"}:
+            parts.extend(
+                [
+                    nl(1),
+                    "  Slashing penalty: ",
+                    Code(withdrawal["slashing_penalty"]),
+                ]
+            )
     return markdown(*parts)
 
 
