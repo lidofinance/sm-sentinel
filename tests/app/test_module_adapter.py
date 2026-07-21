@@ -169,6 +169,8 @@ def test_curated_module_adapter_instantiation():
     assert not hasattr(result, "csm_version")
     assert "DepositedSigningKeysCountChanged" in result.catalog_events()
     assert "OperatorGroupCreated" in result.catalog_events()
+    assert "Resumed" in result.catalog_events()
+    assert "Initialized" not in result.catalog_events()
     assert "KeyAllocatedBalanceChanged" not in result.catalog_events()
     assert "KeyAllocatedBalanceChanged" not in result.notifiable_events()
     assert result.catalog_events() == result.notifiable_events()

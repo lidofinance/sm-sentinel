@@ -198,7 +198,7 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition(
         "DistributionLogUpdated", "- 📈 New rewards distributed", EventGroup.COMMON_CURATED
     ),
-    EventDefinition("Initialized", "- 🎉 Curated Module launched", EventGroup.COMMON_CURATED),
+    EventDefinition("Resumed", "- 🎉 Curated Module launched", EventGroup.COMMON_CURATED),
 ]
 
 CURATED_EVENT_DESCRIPTIONS = {event.name: event.description for event in CURATED_EVENT_CATALOG}
@@ -872,8 +872,9 @@ def distribution_data_updated(
     return base_message.as_markdown()
 
 
-@register_event_message("Initialized")
-def initialized():
+# TODO: Remove the temporary release notification after the CMv2 launch.
+@register_event_message("Resumed")
+def resumed():
     cfg = get_config()
     return markdown(
         "🎉 ",

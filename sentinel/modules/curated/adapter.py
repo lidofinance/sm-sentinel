@@ -51,7 +51,8 @@ CURATED_EVENTS = frozenset(
         "GeneralDelayedPenaltyCompensated",
         "ValidatorSlashingReported",
         "ValidatorWithdrawn",
-        "Initialized",
+        # TODO: Remove the temporary release notification after the CMv2 launch.
+        "Resumed",
         # CSAccounting
         "BondCurveSet",
         "CustomRewardsClaimerSet",

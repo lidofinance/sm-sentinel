@@ -248,8 +248,9 @@ class CuratedEventMessages(BaseModule):
             key, key_url, humanize_wei(event.args["delayFee"])
         ) + await self.notification_footer(event)
 
-    @register_event("Initialized")
-    async def initialized(self, event: EventNotification):
+    # TODO: Remove the temporary release notification after the CMv2 launch.
+    @register_event("Resumed")
+    async def resumed(self, event: EventNotification):
         if event.address.lower() != self.module_address.lower():
             return None
         template = self._require_message_template(event.event)

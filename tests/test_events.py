@@ -982,6 +982,33 @@ async def test_curated_get_notification_plan_uses_inherited_base_handler():
 
 
 @pytest.mark.asyncio
+async def test_curated_resumed_builds_temporary_release_broadcast():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    adapter = _FakeCuratedAdapter(notifiable_events={"Resumed"})
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="Resumed",
+        args={},
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address=adapter.addresses.module,
+        log_index=0,
+        transaction_index=0,
+    )
+
+    plan = await event_messages.get_notification_plan(_notification(event))
+
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids is None
+    assert "Curated Module is live" in plan.broadcast
+    assert "Transaction" in plan.broadcast
+
+
+@pytest.mark.asyncio
 async def test_curated_footer_enriches_node_operator_name_and_caches_metadata():
     from sentinel.models import Event
     from sentinel.modules.curated.events import CuratedEventMessages
