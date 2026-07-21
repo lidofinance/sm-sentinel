@@ -31,5 +31,9 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           push: false
           tags: sm-sentinel:ci
+          build-args: |
+            APP_VERSION=ci
+            GIT_BRANCH=${{ github.head_ref || github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -101,7 +101,8 @@ def test_health_state_stale_heartbeat_breaks_liveness():
 
 def test_health_server_reports_status_endpoints():
     health = HealthState()
-    server = HealthServer(health, host="127.0.0.1", port=0)
+    build_info = {"version": "v1.2.3", "branch": "main", "commit": "abc123"}
+    server = HealthServer(health, host="127.0.0.1", port=0, build_info=build_info)
     server.start()
     try:
         base_url = f"http://127.0.0.1:{server.port}"
@@ -111,6 +112,11 @@ def test_health_server_reports_status_endpoints():
             raise AssertionError("startup should fail before initialization")
         except HTTPError as exc:
             assert exc.code == 503
+
+        with urlopen(f"{base_url}/build-info.json", timeout=1) as response:
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            assert json.loads(response.read()) == build_info
 
         health.mark_polling_started()
         health.mark_subscription_active()

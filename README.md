@@ -77,6 +77,9 @@ Release publishing is driven by pull request labels and a final GitHub release p
 The same `release:*` labels are used for both version bump selection and generated release note categories.
 Draft releases do not publish container images; only the explicit GitHub release publication does.
 
+Every image exposes its release version, Git branch, and commit as JSON at
+`http://<pod>:8080/build-info.json`.
+
 ## Local development
 
 Install dependencies and run the bot with `uv`:
