@@ -18,6 +18,7 @@ from sentinel.config import Config, clear_config, set_config
 from sentinel.module_types import ModuleType
 from sentinel.app.storage import BotStorage
 from sentinel.models import Block, Event, EventNotification
+from sentinel.notifications import NotificationPlan
 from sentinel.modules.aggregation import (
     DEPOSITED_SIGNING_KEYS_COUNT_CHANGED,
     TOTAL_SIGNING_KEYS_COUNT_CHANGED,
@@ -1029,6 +1030,31 @@ async def test_handle_event_log_does_not_advance_block_with_notification_plan():
     await sub.handle_event_log(EventNotification.from_event(_make_event(block=200)), context)
 
     assert context.bot_storage.block.value == 100
+
+
+@pytest.mark.asyncio
+async def test_handle_curated_release_broadcast_reaches_chats_without_subscriptions():
+    plan = NotificationPlan(broadcast="Curated Module is live!")
+    sub = _make_notification_handler(event_messages_return=plan)
+    context = SimpleNamespace(
+        bot_storage=BotStorage(
+            {
+                "user_ids": {100},
+                "group_ids": {200},
+                "channel_ids": {300},
+                "no_ids_to_chats": {},
+            }
+        ),
+        bot=SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    await sub.handle_event_log(EventNotification.from_event(_make_event(block=200)), context)
+
+    assert {call.kwargs["chat_id"] for call in context.bot.send_message.await_args_list} == {
+        100,
+        200,
+        300,
+    }
 
 
 @pytest.mark.asyncio
