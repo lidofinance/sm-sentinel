@@ -380,3 +380,50 @@ async def test_curated_process_blocks_target_validators_count_changed(anvil_laun
         ),
         anvil_launcher=anvil_launcher,
     )
+
+
+async def test_curated_process_blocks_forced_exit_target_limit_unset(anvil_launcher):
+    await _exercise_curated_event(
+        event_name="TargetValidatorsCountChanged",
+        fork_block=3252073,
+        expected_markdown=(
+            "✅ *Unsetting forced exit target limit*\n\n"
+            "The forced target validator limit of `180` has been removed\\.\n"
+            "No additional validators will be requested to exit\\.\n\n"
+            "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited\n"
+            "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
+        ),
+        anvil_launcher=anvil_launcher,
+    )
+
+
+async def test_curated_batches_validator_withdrawals_across_five_blocks(anvil_launcher):
+    first_withdrawal_block = 3232454
+    window_end_block = first_withdrawal_block + 4
+    anvil = await anvil_launcher(window_end_block)
+    harness = await build_subscription(anvil.ws_url, anvil.http_url)
+    try:
+        await harness.replay_blocks(first_withdrawal_block - 1, window_end_block)
+
+        processed = [
+            (event, plan)
+            for event, plan in harness.processed_events
+            if event.event == "ValidatorWithdrawn"
+        ]
+        assert [event.block for event, _ in processed] == [
+            3232454,
+            3232455,
+            3232456,
+            3232457,
+        ]
+
+        messages = {plan.broadcast for _, plan in processed if plan is not None}
+        assert len(messages) == 1
+        message = messages.pop()
+        assert "Validator withdrawals confirmed" in message
+        assert message.count("\\- Validator ") == 4
+        assert r"Blocks: [3232454](https://etherscan.io/block/3232454) \.\.\. " in message
+        assert "[3232457](https://etherscan.io/block/3232457)" in message
+        assert "Node Operator: \\#0 \\- Attestant \\(BVI\\) Limited" in message
+    finally:
+        await harness.disconnect()

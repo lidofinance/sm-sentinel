@@ -244,13 +244,18 @@ class BaseModule(EventMessageEngineBase):
 
     async def validator_withdrawn(self, event: EventNotification):
         template = self._require_message_template(event.event)
-        key, key_url = self.validator_link(event.args["pubkey"])
-        return template(
-            key,
-            key_url,
-            humanize_wei(event.args["exitBalance"]),
-            humanize_wei(event.args["slashingPenalty"]),
-        ) + await self.notification_footer(event)
+        withdrawals = []
+        for source_event in event.source_events:
+            key, key_url = self.validator_link(source_event.args["pubkey"])
+            withdrawals.append(
+                {
+                    "key": key,
+                    "key_url": key_url,
+                    "balance": humanize_wei(source_event.args["exitBalance"]),
+                    "slashing_penalty": humanize_wei(source_event.args["slashingPenalty"]),
+                }
+            )
+        return template(withdrawals) + await self.notification_footer(event)
 
     async def distribution_log_updated(self, event: EventNotification):
         template = self._require_message_template(event.event)

@@ -586,5 +586,8 @@ register_event(
 )(CuratedEventMessages.validator_exit_request)
 register_event("TriggeredExitFeeRecorded")(CuratedEventMessages.triggered_exit_fee_recorded)
 register_event("StrikesPenaltyProcessed")(CuratedEventMessages.strikes_penalty_processed)
-register_event("ValidatorWithdrawn")(CuratedEventMessages.validator_withdrawn)
+register_event(
+    "ValidatorWithdrawn",
+    aggregation_group=AggregationGroups.VALIDATOR_WITHDRAWALS,
+)(CuratedEventMessages.validator_withdrawn)
 register_event("DistributionLogUpdated")(CuratedEventMessages.distribution_log_updated)

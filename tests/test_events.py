@@ -580,6 +580,17 @@ def test_limit_unset_mode_zero():
     assert result == expected
 
 
+def test_forced_exit_target_limit_unset():
+    result = target_validators_count_changed(2, 180, 0, 0, 180)
+    expected = (
+        "✅ *Unsetting forced exit target limit*\n\n"
+        r"The forced target validator limit of `180` has been removed\."
+        "\n"
+        r"No additional validators will be requested to exit\."
+    )
+    assert result == expected
+
+
 @pytest.mark.asyncio
 async def test_key_removal_charge_is_multiplied_by_removed_keys_count():
     from sentinel.models import Event
@@ -1906,8 +1917,8 @@ async def test_validator_exit_requests_are_batched_per_node_operator():
 
     key_1 = "12" * 32
     key_2 = "34" * 32
-    short_key_1 = f"0x{key_1[:8]}...{key_1[-8:]}"
-    short_key_2 = f"0x{key_2[:8]}...{key_2[-8:]}"
+    short_key_1 = f"0x{key_1[:8]}\\.\\.\\.{key_1[-8:]}"
+    short_key_2 = f"0x{key_2[:8]}\\.\\.\\.{key_2[-8:]}"
     key_1_with_prefix = f"0x{key_1}"
     key_2_with_prefix = f"0x{key_2}"
     validator_pubkeys = [key_1, key_2]
@@ -1946,6 +1957,61 @@ async def test_validator_exit_requests_are_batched_per_node_operator():
         in message
     )
     assert "Request date: `Tue 14 Nov 2023, 10:13PM UTC`" in message
+    assert "nodeOperatorId: 42" in message
+
+
+@pytest.mark.asyncio
+async def test_validator_withdrawals_are_batched_across_five_blocks():
+    from sentinel.models import Event, EventNotification
+    from sentinel.modules.aggregation import AggregationGroups
+    from sentinel.modules.community.events import (
+        COMMUNITY_EVENTS_TO_FOLLOW,
+        CommunityEventMessages,
+    )
+
+    event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
+    event_messages.chain = _DummyConnectProvider()
+    event_messages.cfg = SimpleNamespace(
+        beaconchain_url_template="https://beaconcha.in/validator/{}",
+        etherscan_block_url_template="https://etherscan.io/block/{}",
+    )
+
+    events = tuple(
+        Event(
+            event="ValidatorWithdrawn",
+            args={
+                "nodeOperatorId": 42,
+                "pubkey": bytes.fromhex(pubkey),
+                "exitBalance": exit_balance,
+                "slashingPenalty": slashing_penalty,
+            },
+            block=block,
+            tx=HexBytes(tx),
+            address="0x0000000000000000000000000000000000000000",
+            log_index=0,
+            transaction_index=0,
+        )
+        for pubkey, exit_balance, slashing_penalty, block, tx in (
+            ("12" * 48, 32 * 10**18, 0, 100, "0x01"),
+            ("34" * 48, 31 * 10**18, 10**18, 104, "0x02"),
+        )
+    )
+
+    message = await CommunityEventMessages.validator_withdrawn(
+        event_messages, EventNotification(events)
+    )
+
+    aggregation_group = COMMUNITY_EVENTS_TO_FOLLOW["ValidatorWithdrawn"].aggregation_group
+    assert aggregation_group == AggregationGroups.VALIDATOR_WITHDRAWALS
+    assert aggregation_group.window_blocks == 5
+    assert "Validator withdrawals confirmed" in message
+    assert "Validator 1" in message
+    assert "Validator 2" in message
+    assert "Exit balance: `32 ether`" in message
+    assert "Exit balance: `31 ether`" in message
+    assert "Slashing penalty: `1 ether`" in message
+    assert r"Blocks: [100](https://etherscan.io/block/100) \.\.\. " in message
+    assert "[104](https://etherscan.io/block/104)" in message
     assert "nodeOperatorId: 42" in message
 
 
