@@ -77,15 +77,14 @@ class TelegramNotificationHandler:
         if plan.broadcast:
             targeted_ids = set(plan.per_node_operator.keys())
             if plan.broadcast_node_operator_ids is not None:
-                candidate_ids = plan.broadcast_node_operator_ids
+                candidate_ids = set(plan.broadcast_node_operator_ids)
+                candidate_ids -= targeted_ids
+
+                broadcast_chats: set[int] = set()
+                for node_operator_id in candidate_ids:
+                    broadcast_chats.update(node_operator_chats.chats_for(node_operator_id))
             else:
-                candidate_ids = node_operator_chats.ids()
-
-            candidate_ids -= targeted_ids
-
-            broadcast_chats: set[int] = set()
-            for node_operator_id in candidate_ids:
-                broadcast_chats.update(node_operator_chats.chats_for(node_operator_id))
+                broadcast_chats = set(actual_chat_ids)
 
             broadcast_chats = broadcast_chats.intersection(actual_chat_ids)
             broadcast_chats -= targeted_chats

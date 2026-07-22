@@ -2,14 +2,16 @@ import asyncio
 import logging
 from pathlib import Path
 from contextlib import suppress
+from typing import cast
 
 from telegram.ext import AIORateLimiter, ApplicationBuilder, ContextTypes
 from web3 import AsyncWeb3, WebSocketProvider
 
+from sentinel.app.application import SentinelApplication
 from sentinel.app.context import BotContext
 from sentinel.app.health import HealthServer, HealthState
 from sentinel.app.module_adapter import build_module_adapter_from_config
-from sentinel.app.runtime import BotRuntime, attach_runtime
+from sentinel.app.runtime import BotRuntime
 from sentinel.app.storage import create_persistence
 from sentinel.app.telegram_adapters import (
     TelegramNotificationHandler,
@@ -46,13 +48,15 @@ def create_runtime() -> BotRuntime:
 
         context_types = ContextTypes(context=BotContext)
 
-        application = (
+        application = cast(
+            SentinelApplication,
             ApplicationBuilder()
+            .application_class(SentinelApplication)
             .token(cfg.token)
             .context_types(context_types)
             .persistence(persistence)
             .rate_limiter(AIORateLimiter(max_retries=5))
-            .build()
+            .build(),
         )
 
         persistent_provider = AsyncWeb3(
@@ -93,7 +97,7 @@ def create_runtime() -> BotRuntime:
             health=health,
             health_server=health_server,
         )
-        attach_runtime(runtime)
+        application.attach_runtime(runtime)
         return runtime
     except Exception as exc:
         health.mark_fatal_error(exc)

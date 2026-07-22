@@ -2527,19 +2527,6 @@
   },
   {
     "type": "event",
-    "name": "ExpiredBondLockRemoved",
-    "inputs": [
-      {
-        "name": "nodeOperatorId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "FeeSplitsSet",
     "inputs": [
       {

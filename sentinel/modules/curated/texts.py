@@ -150,9 +150,6 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition("BondDebtIncreased", "- 🚨 Bond debt increased", EventGroup.PENALTIES),
     EventDefinition("BondDebtCovered", "- ✅ Bond debt covered", EventGroup.PENALTIES),
     EventDefinition(
-        "ExpiredBondLockRemoved", "- ✅ Expired bond lock removed", EventGroup.PENALTIES
-    ),
-    EventDefinition(
         "StrikesPenaltyProcessed", "- 🚨 Strikes penalty processed", EventGroup.PENALTIES
     ),
     EventDefinition(
@@ -198,7 +195,7 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
     EventDefinition(
         "DistributionLogUpdated", "- 📈 New rewards distributed", EventGroup.COMMON_CURATED
     ),
-    EventDefinition("Initialized", "- 🎉 Curated Module launched", EventGroup.COMMON_CURATED),
+    EventDefinition("Resumed", "- 🎉 Curated Module launched", EventGroup.COMMON_CURATED),
 ]
 
 CURATED_EVENT_DESCRIPTIONS = {event.name: event.description for event in CURATED_EVENT_CATALOG}
@@ -465,6 +462,17 @@ def target_validators_count_changed(
                 nl(1),
                 f"{keys_above_limit} {key_word} above the limit will be requested to exit immediately.",
             )
+        case (2, limit_before, 0, _):
+            return markdown(
+                "✅ ",
+                Bold("Unsetting forced exit target limit"),
+                nl(),
+                "The forced target validator limit of ",
+                Code(str(limit_before)),
+                " has been removed.",
+                nl(1),
+                "No additional validators will be requested to exit.",
+            )
         case (_, _, 0, _):
             return markdown(
                 "🚨 ",
@@ -621,16 +629,6 @@ def bond_debt_increased(amount):
 @register_event_message("BondDebtCovered")
 def bond_debt_covered(amount):
     return markdown("✅ ", Bold("Bond debt covered"), nl(), "Covered amount: ", Code(amount))
-
-
-@register_event_message("ExpiredBondLockRemoved")
-def expired_bond_lock_removed():
-    return markdown(
-        "✅ ",
-        Bold("Expired bond lock removed"),
-        nl(),
-        "More bond may now be available for normal operations.",
-    )
 
 
 @register_event_message("GeneralDelayedPenaltyReported")
@@ -822,19 +820,55 @@ def strikes_penalty_processed(key, key_url, penalty):
 
 
 @register_event_message("ValidatorWithdrawn")
-def validator_withdrawn(key, key_url, balance, slashing_penalty):
+def validator_withdrawn(withdrawals):
+    if len(withdrawals) == 1:
+        withdrawal = withdrawals[0]
+        parts: list = [
+            "👀 ",
+            Bold("Validator withdrawal confirmed"),
+            nl(),
+            "Withdrawn key: ",
+            TextLink(withdrawal["key"], url=withdrawal["key_url"]),
+            nl(1),
+            "Exit balance: ",
+            Code(withdrawal["balance"]),
+        ]
+        if withdrawal["slashing_penalty"] not in {"0 ether", "0 wei"}:
+            parts.extend([nl(1), "Slashing penalty: ", Code(withdrawal["slashing_penalty"])])
+        return markdown(*parts)
+
     parts: list = [
         "👀 ",
-        Bold("Validator withdrawal confirmed"),
+        Bold("Validator withdrawals confirmed"),
         nl(),
-        "Withdrawn key: ",
-        TextLink(key, url=key_url),
+        "Withdrawn validators:",
         nl(1),
-        "Exit balance: ",
-        Code(balance),
     ]
-    if slashing_penalty not in {"0 ether", "0 wei"}:
-        parts.extend([nl(1), "Slashing penalty: ", Code(slashing_penalty)])
+    for index, withdrawal in enumerate(withdrawals, start=1):
+        if index > 1:
+            parts.append(nl(1))
+        parts.extend(
+            [
+                "- Validator ",
+                str(index),
+                ": ",
+                TextLink(
+                    _shorten_validator_key_for_link(withdrawal["key"]),
+                    url=withdrawal["key_url"],
+                ),
+                nl(1),
+                "  Exit balance: ",
+                Code(withdrawal["balance"]),
+            ]
+        )
+        if withdrawal["slashing_penalty"] not in {"0 ether", "0 wei"}:
+            parts.extend(
+                [
+                    nl(1),
+                    "  Slashing penalty: ",
+                    Code(withdrawal["slashing_penalty"]),
+                ]
+            )
     return markdown(*parts)
 
 
@@ -872,8 +906,9 @@ def distribution_data_updated(
     return base_message.as_markdown()
 
 
-@register_event_message("Initialized")
-def initialized():
+# TODO: Remove the temporary release notification after the CMv2 launch.
+@register_event_message("Resumed")
+def resumed():
     cfg = get_config()
     return markdown(
         "🎉 ",

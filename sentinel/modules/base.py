@@ -1,10 +1,11 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from eth_typing import ChecksumAddress
 
-from sentinel.app.contracts import ContractABIs, ContractAddresses
+from sentinel.app.contracts import ContractABIs, ContractAddresses, _find_staking_module_id
 from sentinel.chain import ConnectOnDemand
 from sentinel.module_types import ModuleType
 from sentinel.modules.texts import BotTexts
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from sentinel.modules.aggregation import EventAggregator
 
 EventPredicate = Callable[["Event"], bool]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,8 @@ class ModuleAdapter(Protocol):
 
     async def warm_up(self) -> None: ...
 
+    async def refresh_staking_module_id(self) -> None: ...
+
     def event_sources(self) -> tuple[EventSource, ...]: ...
 
     def topic_abis(self) -> tuple[list[dict], ...]: ...
@@ -86,6 +90,7 @@ class BaseModuleAdapter:
         self.contract_abis = contract_abis
         self.chain = chain
         self.module_ui_url = module_ui_url
+        self._staking_module_id = addresses.staking_module_id
         self._node_operators_count_cache: int | None = None
 
     def catalog_events(self) -> set[str]:
@@ -121,6 +126,29 @@ class BaseModuleAdapter:
 
     async def _fetch_node_operators_count(self) -> int:
         return await self.contracts.module.functions.getNodeOperatorsCount().call()
+
+    def staking_module_id_matches(self, event: "Event") -> bool:
+        return event.args["stakingModuleId"] == self._staking_module_id
+
+    async def refresh_staking_module_id(self) -> None:
+        if self._staking_module_id is not None:
+            return
+
+        try:
+            async with self.chain:
+                modules = await self.contracts.staking_router.functions.getStakingModules().call()
+        except Exception:
+            logger.warning(
+                "Failed to refresh %s staking module ID", self.module_name, exc_info=True
+            )
+            return
+
+        module_id = _find_staking_module_id(modules, self.addresses.module)
+        if module_id is None:
+            return
+
+        self._staking_module_id = module_id
+        logger.info("Discovered %s staking module ID: %s", self.module_name, module_id)
 
     async def node_operator_label(self, operator_id: int) -> str:
         return f"#{operator_id}"

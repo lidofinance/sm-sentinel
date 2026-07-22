@@ -8,7 +8,7 @@ from sentinel.modules.community.texts import (
     bond_debt_covered,
     bond_debt_increased,
     custom_rewards_claimer_set,
-    expired_bond_lock_removed,
+    bond_lock_removed,
     fee_splits_set,
     key_allocated_balance_changed,
     target_validators_count_changed,
@@ -223,6 +223,7 @@ class _FakeCuratedAdapter:
         )
         self._notifiable_events = notifiable_events or set()
         self.remembered_labels: list[tuple[int, str | None]] = []
+        self.staking_module_id_refreshes = 0
 
     def catalog_events(self):
         return self._notifiable_events
@@ -232,6 +233,9 @@ class _FakeCuratedAdapter:
 
     def remember_node_operator_label(self, operator_id: int, name: str | None) -> None:
         self.remembered_labels.append((operator_id, name))
+
+    async def refresh_staking_module_id(self) -> None:
+        self.staking_module_id_refreshes += 1
 
 
 def _set_event_config():
@@ -265,7 +269,7 @@ def test_new_v3_message_templates_render_core_fields():
         "0x0000000000000000000000000000000000000000"
     )
 
-    assert "Expired bond lock removed" in expired_bond_lock_removed()
+    assert "Bond lock removed" in bond_lock_removed()
     assert "Key balance increased" in key_allocated_balance_changed(7, "3 ether")
     assert "Key index: `7`" in key_allocated_balance_changed(7, "3 ether")
     assert "New allocated balance: `3 ether`" in key_allocated_balance_changed(7, "3 ether")
@@ -572,6 +576,17 @@ def test_limit_unset_mode_zero():
     expected = (
         "🚨 *Target validators count changed*\n\n"
         r"The limit has been set to zero\. No keys will be requested to exit\."
+    )
+    assert result == expected
+
+
+def test_forced_exit_target_limit_unset():
+    result = target_validators_count_changed(2, 180, 0, 0, 180)
+    expected = (
+        "✅ *Unsetting forced exit target limit*\n\n"
+        r"The forced target validator limit of `180` has been removed\."
+        "\n"
+        r"No additional validators will be requested to exit\."
     )
     assert result == expected
 
@@ -979,6 +994,34 @@ async def test_curated_get_notification_plan_uses_inherited_base_handler():
     assert "nodeOperatorId: 42" in plan.broadcast
     assert module.node_operator_calls == [42]
     assert module.node_operator_call_objects[0].calls == [{"block_identifier": 122}]
+
+
+@pytest.mark.asyncio
+async def test_curated_resumed_builds_temporary_release_broadcast():
+    from sentinel.models import Event
+    from sentinel.modules.curated.events import CuratedEventMessages
+    from sentinel.notifications import NotificationPlan
+
+    _set_event_config()
+    adapter = _FakeCuratedAdapter(notifiable_events={"Resumed"})
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    event = Event(
+        event="Resumed",
+        args={},
+        block=123,
+        tx=HexBytes("0xdeadbeef"),
+        address=adapter.addresses.module,
+        log_index=0,
+        transaction_index=0,
+    )
+
+    plan = await event_messages.get_notification_plan(_notification(event))
+
+    assert adapter.staking_module_id_refreshes == 1
+    assert isinstance(plan, NotificationPlan)
+    assert plan.broadcast_node_operator_ids is None
+    assert "Curated Module is live" in plan.broadcast
+    assert "Transaction" in plan.broadcast
 
 
 @pytest.mark.asyncio
@@ -1874,8 +1917,8 @@ async def test_validator_exit_requests_are_batched_per_node_operator():
 
     key_1 = "12" * 32
     key_2 = "34" * 32
-    short_key_1 = f"0x{key_1[:8]}...{key_1[-8:]}"
-    short_key_2 = f"0x{key_2[:8]}...{key_2[-8:]}"
+    short_key_1 = f"0x{key_1[:8]}\\.\\.\\.{key_1[-8:]}"
+    short_key_2 = f"0x{key_2[:8]}\\.\\.\\.{key_2[-8:]}"
     key_1_with_prefix = f"0x{key_1}"
     key_2_with_prefix = f"0x{key_2}"
     validator_pubkeys = [key_1, key_2]
@@ -1914,6 +1957,61 @@ async def test_validator_exit_requests_are_batched_per_node_operator():
         in message
     )
     assert "Request date: `Tue 14 Nov 2023, 10:13PM UTC`" in message
+    assert "nodeOperatorId: 42" in message
+
+
+@pytest.mark.asyncio
+async def test_validator_withdrawals_are_batched_across_five_blocks():
+    from sentinel.models import Event, EventNotification
+    from sentinel.modules.aggregation import AggregationGroups
+    from sentinel.modules.community.events import (
+        COMMUNITY_EVENTS_TO_FOLLOW,
+        CommunityEventMessages,
+    )
+
+    event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
+    event_messages.chain = _DummyConnectProvider()
+    event_messages.cfg = SimpleNamespace(
+        beaconchain_url_template="https://beaconcha.in/validator/{}",
+        etherscan_block_url_template="https://etherscan.io/block/{}",
+    )
+
+    events = tuple(
+        Event(
+            event="ValidatorWithdrawn",
+            args={
+                "nodeOperatorId": 42,
+                "pubkey": bytes.fromhex(pubkey),
+                "exitBalance": exit_balance,
+                "slashingPenalty": slashing_penalty,
+            },
+            block=block,
+            tx=HexBytes(tx),
+            address="0x0000000000000000000000000000000000000000",
+            log_index=0,
+            transaction_index=0,
+        )
+        for pubkey, exit_balance, slashing_penalty, block, tx in (
+            ("12" * 48, 32 * 10**18, 0, 100, "0x01"),
+            ("34" * 48, 31 * 10**18, 10**18, 104, "0x02"),
+        )
+    )
+
+    message = await CommunityEventMessages.validator_withdrawn(
+        event_messages, EventNotification(events)
+    )
+
+    aggregation_group = COMMUNITY_EVENTS_TO_FOLLOW["ValidatorWithdrawn"].aggregation_group
+    assert aggregation_group == AggregationGroups.VALIDATOR_WITHDRAWALS
+    assert aggregation_group.window_blocks == 5
+    assert "Validator withdrawals confirmed" in message
+    assert "Validator 1" in message
+    assert "Validator 2" in message
+    assert "Exit balance: `32 ether`" in message
+    assert "Exit balance: `31 ether`" in message
+    assert "Slashing penalty: `1 ether`" in message
+    assert r"Blocks: [100](https://etherscan.io/block/100) \.\.\. " in message
+    assert "[104](https://etherscan.io/block/104)" in message
     assert "nodeOperatorId: 42" in message
 
 

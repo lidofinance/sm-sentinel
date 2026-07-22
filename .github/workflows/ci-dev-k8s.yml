@@ -1,0 +1,27 @@
+name: Build and push SM Sentinel to testnet
+
+run-name: Build and push SM Sentinel:dev to testnet
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+    paths-ignore:
+      - ".github/**"
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    uses: lidofinance/actions/.github/workflows/k8s-build-push-harbor.yml@c7b5b6c5d8013046347d728d748fa741eb214e28
+    with:
+      tag: dev
+      registry: registry.dev.k8s-dev.org
+      registry_username: ${{ vars.REGISTRY_USERNAME }}
+      image: team-csm/sm-sentinel
+      environment: harbor_dev_release
+    secrets:
+      registry_token: ${{ secrets.HARBOR_DEV_TOKEN }}

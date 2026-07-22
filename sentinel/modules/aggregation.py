@@ -39,6 +39,10 @@ class AggregationGroups:
         name="validator_exit_requests",
         window_blocks=1,
     )
+    VALIDATOR_WITHDRAWALS = AggregationGroup(
+        name="validator_withdrawals",
+        window_blocks=5,
+    )
     OPERATOR_GROUP_CHANGES = AggregationGroup(
         name="operator_group_changes",
         window_blocks=1,

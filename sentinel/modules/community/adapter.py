@@ -10,7 +10,6 @@ from sentinel.app.contracts import (
     CommunityContractABIs,
 )
 from sentinel.chain import ConnectOnDemand
-from sentinel.models import Event
 from sentinel.module_types import ModuleType
 from sentinel.modules.base import BaseModuleAdapter, EventSource
 from sentinel.modules.community.texts import CommunityTexts
@@ -68,7 +67,7 @@ COMMUNITY_V3_ONLY_EVENTS = frozenset(
         "BondDebtCovered",
         "CustomRewardsClaimerSet",
         "FeeSplitsSet",
-        "ExpiredBondLockRemoved",
+        "BondLockRemoved",
         "KeyAllocatedBalanceChanged",
         "ValidatorWithdrawn",
         "Initialized",
@@ -178,9 +177,6 @@ class CommunityModuleAdapter(BaseModuleAdapter):
 
     def side_effect_events(self) -> set[str]:
         return set(COMMUNITY_SIDE_EFFECT_EVENTS)
-
-    def staking_module_id_matches(self, event: Event) -> bool:
-        return event.args["stakingModuleId"] == self.addresses.staking_module_id
 
     def event_sources(self) -> tuple[EventSource, ...]:
         return (

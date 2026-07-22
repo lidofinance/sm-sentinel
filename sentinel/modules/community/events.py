@@ -199,7 +199,7 @@ register_event("CustomRewardsClaimerSet")(CommunityEventMessages.custom_rewards_
 register_event("FeeSplitsSet")(CommunityEventMessages.fee_splits_set)
 register_event("BondDebtIncreased")(CommunityEventMessages.bond_debt_increased)
 register_event("BondDebtCovered")(CommunityEventMessages.bond_debt_covered)
-register_event("ExpiredBondLockRemoved")(CommunityEventMessages.expired_bond_lock_removed)
+register_event("BondLockRemoved")(CommunityEventMessages.bond_lock_removed)
 register_event("GeneralDelayedPenaltyReported")(
     CommunityEventMessages.general_delayed_penalty_reported
 )
@@ -219,5 +219,8 @@ register_event(
 )(CommunityEventMessages.validator_exit_request)
 register_event("TriggeredExitFeeRecorded")(CommunityEventMessages.triggered_exit_fee_recorded)
 register_event("StrikesPenaltyProcessed")(CommunityEventMessages.strikes_penalty_processed)
-register_event("ValidatorWithdrawn")(CommunityEventMessages.validator_withdrawn)
+register_event(
+    "ValidatorWithdrawn",
+    aggregation_group=AggregationGroups.VALIDATOR_WITHDRAWALS,
+)(CommunityEventMessages.validator_withdrawn)
 register_event("DistributionLogUpdated")(CommunityEventMessages.distribution_log_updated)

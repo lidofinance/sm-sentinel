@@ -1,6 +1,7 @@
 from dataclasses import fields, replace
 
 import pytest
+from types import SimpleNamespace
 
 from sentinel.app.contracts import (
     CommunityContractAddresses,
@@ -169,6 +170,8 @@ def test_curated_module_adapter_instantiation():
     assert not hasattr(result, "csm_version")
     assert "DepositedSigningKeysCountChanged" in result.catalog_events()
     assert "OperatorGroupCreated" in result.catalog_events()
+    assert "Resumed" in result.catalog_events()
+    assert "Initialized" not in result.catalog_events()
     assert "KeyAllocatedBalanceChanged" not in result.catalog_events()
     assert "KeyAllocatedBalanceChanged" not in result.notifiable_events()
     assert result.catalog_events() == result.notifiable_events()
@@ -187,6 +190,72 @@ def test_build_curated_module_adapter_uses_curated_module_abi():
 
     assert result.module_type == ModuleType.CURATED
     assert result.contract_abis.module is CuratedModuleAdapter.contract_abis_for(addresses).module
+
+
+@pytest.mark.asyncio
+async def test_curated_module_adapter_discovers_module_id_after_startup():
+    addresses = replace(
+        _dummy_addresses(ModuleType.CURATED),
+        staking_module_id=None,
+    )
+    assert isinstance(addresses, CuratedContractAddresses)
+    staking_router = SimpleNamespace(
+        functions=SimpleNamespace(
+            getStakingModules=lambda: _FakeCall([(5, addresses.module)]),
+        )
+    )
+    adapter = CuratedModuleAdapter(
+        addresses=addresses,
+        contracts=CuratedModuleContracts(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            fee_distributor=object(),
+            exit_penalties=object(),
+            meta_registry=object(),
+            lido_locator=object(),
+            staking_router=staking_router,
+            vebo=object(),
+        ),
+        contract_abis=CuratedModuleAdapter.contract_abis_for(addresses),
+        module_ui_url=None,
+        chain=_FakeChain(),
+    )
+    event = SimpleNamespace(args={"stakingModuleId": 5})
+
+    assert not adapter.staking_module_id_matches(event)
+
+    await adapter.refresh_staking_module_id()
+
+    assert adapter.staking_module_id_matches(event)
+
+
+@pytest.mark.asyncio
+async def test_community_module_adapter_discovers_module_id_after_startup():
+    addresses = replace(
+        _dummy_addresses(ModuleType.COMMUNITY),
+        staking_module_id=None,
+    )
+    assert isinstance(addresses, CommunityContractAddresses)
+    staking_router = SimpleNamespace(
+        functions=SimpleNamespace(
+            getStakingModules=lambda: _FakeCall([(3, addresses.module)]),
+        )
+    )
+    adapter = CommunityModuleAdapter(
+        addresses=addresses,
+        contracts=replace(_dummy_contracts(), staking_router=staking_router),
+        contract_abis=get_contract_abis(addresses.csm_version),
+        module_ui_url=None,
+        chain=_FakeChain(),
+    )
+    event = SimpleNamespace(args={"stakingModuleId": 3})
+
+    assert not adapter.staking_module_id_matches(event)
+
+    await adapter.refresh_staking_module_id()
+
+    assert adapter.staking_module_id_matches(event)
 
 
 def test_adapter_build_event_list_text_filters_catalog_events():
@@ -261,7 +330,7 @@ def test_community_module_adapter_catalog_events_change_with_csm_version():
         "BondDebtCovered",
         "CustomRewardsClaimerSet",
         "FeeSplitsSet",
-        "ExpiredBondLockRemoved",
+        "BondLockRemoved",
     }
     assert new_v3_events.isdisjoint(adapter_v2.catalog_events())
     assert new_v3_events.issubset(adapter_v3.catalog_events())
