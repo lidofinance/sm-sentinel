@@ -30,6 +30,19 @@ from sentinel.jobs import JobContext
 logger = logging.getLogger(__name__)
 
 
+def _resolve_backfill_start_block(
+    configured_block: int | None,
+    persisted_block: object | None,
+) -> int:
+    if configured_block is not None:
+        return configured_block
+    if persisted_block is None:
+        return 0
+
+    checkpoint = normalize_block_number(persisted_block)
+    return checkpoint + 1 if checkpoint > 0 else 0
+
+
 def create_runtime() -> BotRuntime:
     health = HealthState()
     health_host, health_port = get_healthcheck_bind_from_env()
@@ -122,6 +135,7 @@ async def _run(runtime: BotRuntime) -> None:
     heartbeat_task = asyncio.create_task(runtime.health.heartbeat_loop())
     module_supervisor_task: asyncio.Task[None] | None = None
     try:
+        persisted_block = application.bot_data.get("block")
         module_supervisor.ensure_state_containers()
         runtime.health.mark_warmup_started()
         try:
@@ -134,11 +148,9 @@ async def _run(runtime: BotRuntime) -> None:
 
         application.bot_data["admin_ids"] = cfg.admin_ids
 
-        persisted_block = normalize_block_number(application.bot_data.get("block"))
-        block_from = (
-            cfg.block_from
-            if cfg.block_from is not None
-            else (persisted_block + 1 if persisted_block is not None else None)
+        block_from = _resolve_backfill_start_block(
+            cfg.block_from,
+            persisted_block,
         )
 
         logger.info(
@@ -157,8 +169,14 @@ async def _run(runtime: BotRuntime) -> None:
         await module_supervisor.wait_until_subscribed()
         runtime.health.mark_startup_complete()
 
-        if block_from:
+        if block_from != 0:
             await module_supervisor.catch_up_from(block_from)
+        else:
+            live_head = await module_supervisor.checkpoint_current_head()
+            logger.info(
+                "Historical backfill skipped. Starting from live head: %s",
+                live_head,
+            )
 
         await job_context.schedule(application)
 
