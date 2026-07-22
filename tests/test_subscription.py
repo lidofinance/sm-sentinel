@@ -1084,3 +1084,23 @@ async def test_process_new_block_does_not_regress_persisted_block():
     await harness.runtime.handle_block(Block(number=300))
 
     assert harness.storage.state.block.value == 500
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("persisted_block", "live_head", "expected_checkpoint"),
+    [(0, 25_586_956, 25_586_956), (25_586_960, 25_586_956, 25_586_960)],
+)
+async def test_checkpoint_current_head_does_not_regress_checkpoint(
+    persisted_block: int,
+    live_head: int,
+    expected_checkpoint: int,
+):
+    supervisor = ModuleRuntimeSupervisor.__new__(ModuleRuntimeSupervisor)
+    supervisor._storage = _FakeSubscriptionStorage({"block": persisted_block})
+    supervisor.get_block_number = AsyncMock(return_value=live_head)
+
+    result = await supervisor.checkpoint_current_head()
+
+    assert result == live_head
+    assert supervisor._storage.state.block.value == expected_checkpoint
