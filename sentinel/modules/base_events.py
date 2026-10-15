@@ -300,9 +300,9 @@ class BaseModule(EventMessageEngineBase):
         return template(withdrawals) + await self.notification_footer(event)
 
     async def distribution_log_updated(self, event: EventNotification):
-        if distribution_report_rewards(event) == 0:
-            return None
-
+        # Strikes are independent of rewards, so a zero-share report still needs its log read;
+        # only the generic rewards message is suppressed for it.
+        rewards_distributed = distribution_report_rewards(event) > 0
         template = self._require_message_template(event.event)
         base_message = template()
         footer = await self.notification_footer(event)
@@ -310,24 +310,32 @@ class BaseModule(EventMessageEngineBase):
 
         log_cid = event.args.get("logCid")
         try:
-            distribution_log = await self._fetch_distribution_log(log_cid)
+            summary = parse_distribution_log(await self._fetch_distribution_log(log_cid))
         except Exception as exc:
             logger.warning(
                 "Failed to enrich DistributionLogUpdated for logCid %s: %s",
                 log_cid,
                 exc,
             )
+            if not rewards_distributed:
+                return None
             return NotificationPlan.broadcast(fallback_message)
-
-        summary = parse_distribution_log(distribution_log)
 
         operator_messages: dict[str, str] = {}
         for operator_id, flagged in summary.strikes_per_operator.items():
             flagged_sorted = sorted(flagged, key=lambda item: validator_sort_key(item[0]))
             operator_label = await self._distribution_operator_label(operator_id, event.block)
-            operator_messages[str(operator_id)] = (
-                f"{template(operator_label, flagged_sorted)}{footer}"
+            operator_message = template(
+                operator_label,
+                flagged_sorted,
+                rewards_distributed=rewards_distributed,
             )
+            operator_messages[str(operator_id)] = f"{operator_message}{footer}"
+
+        if not rewards_distributed:
+            if not operator_messages:
+                return None
+            return NotificationPlan.per_operator(operator_messages)
 
         if not operator_messages:
             if summary.all_operator_ids:

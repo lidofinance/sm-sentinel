@@ -7,6 +7,7 @@ from web3.exceptions import (
     ContractLogicError,
     PersistentConnectionClosedOK,
     ProviderConnectionError,
+    TimeExhausted,
     TooManyRequests,
     Web3RPCError,
 )
@@ -19,6 +20,7 @@ from sentinel.rpc_provider import (
     RpcChainMismatch,
     RpcEndpointPool,
     RpcEndpointsUnavailable,
+    RpcFailureKind,
     RpcRequestRejectedByAllProviders,
     RpcSubscriptionReconnectRequired,
 )
@@ -684,3 +686,92 @@ async def test_concurrent_capacity_failures_do_not_disconnect_new_endpoint(monke
     assert first == second == "ok"
     assert attempted == [1]
     assert provider.active_endpoint == pool.endpoints[1]
+
+
+@pytest.mark.asyncio
+async def test_unanswered_request_fails_over_to_next_endpoint(monkeypatch):
+    pool = RpcEndpointPool(
+        ("ws://primary.invalid", "ws://fallback.invalid"),
+        cooldown_seconds=60,
+    )
+    provider = _request_provider(pool, role="backfill")
+    attempted: list[int] = []
+
+    async def connect_endpoint(endpoint):
+        attempted.append(endpoint.index)
+
+    async def disconnect_endpoint():
+        provider.active_endpoint = None
+
+    async def is_connected():
+        return provider.active_endpoint is not None
+
+    async def operation():
+        assert provider.active_endpoint is not None
+        if provider.active_endpoint.index == 0:
+            raise TimeExhausted("no response for eth_getLogs")
+        return "ok"
+
+    monkeypatch.setattr(provider, "is_connected", is_connected)
+    monkeypatch.setattr(provider, "_open_endpoint", connect_endpoint)
+    monkeypatch.setattr(provider, "_close_endpoint", disconnect_endpoint)
+
+    assert await provider.execute_request(operation, method="eth_getLogs") == "ok"
+    assert attempted == [0, 0, 1]
+    candidates, _ = await pool.candidates()
+    assert candidates == (pool.endpoints[1],)
+
+
+@pytest.mark.asyncio
+async def test_subscription_listener_requests_reconnect_after_unanswered_request():
+    provider = _provider(
+        RpcEndpointPool(("ws://primary.invalid",)),
+        role="subscription",
+    )
+    provider._provider_specific_socket_reader = AsyncMock(  # noqa: SLF001
+        side_effect=TimeExhausted("no response for eth_subscribe")
+    )
+
+    with pytest.raises(RpcSubscriptionReconnectRequired) as raised:
+        await provider._message_listener()  # noqa: SLF001
+
+    assert raised.value.failure.kind is RpcFailureKind.TRANSPORT
+
+
+@pytest.mark.asyncio
+async def test_stale_connection_success_keeps_newer_endpoint_cooldown(monkeypatch):
+    pool = RpcEndpointPool(
+        ("ws://primary.invalid", "ws://fallback.invalid"),
+        cooldown_seconds=60,
+    )
+    primary, fallback = pool.endpoints
+    reads = _request_provider(pool, role="reads")
+    subscription = _provider(pool, role="subscription")
+    reads_opening = asyncio.Event()
+    release_reads = asyncio.Event()
+    subscription_attempts: list[int] = []
+
+    async def open_reads(endpoint):
+        reads_opening.set()
+        await release_reads.wait()
+
+    async def open_subscription(endpoint):
+        subscription_attempts.append(endpoint.index)
+
+    monkeypatch.setattr(reads, "_open_endpoint", open_reads)
+    monkeypatch.setattr(subscription, "_open_endpoint", open_subscription)
+
+    reads_connect = asyncio.create_task(reads.connect())
+    await reads_opening.wait()
+    # The subscription listener cools the primary while the reads connection is still opening.
+    await pool.mark_failed(primary)
+    release_reads.set()
+    await reads_connect
+
+    assert reads.active_endpoint == primary
+    candidates, _ = await pool.candidates()
+    assert candidates == (fallback,)
+
+    await subscription.connect()
+
+    assert subscription_attempts == [fallback.index]

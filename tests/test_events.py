@@ -862,29 +862,31 @@ async def test_distribution_log_updated_handles_empty_payload():
     assert _broadcast(plan) == f"{expected_base}{expected_foot}"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("module_name", ["community", "curated"])
-async def test_distribution_log_updated_skips_zero_distributed_rewards(module_name):
-    from sentinel.models import Event
+def _distribution_event_messages(module_name: str, fetcher: "_FakeFetcher"):
     from sentinel.modules.community.events import CommunityEventMessages
     from sentinel.modules.curated.events import CuratedEventMessages
 
-    _set_event_config()
     adapter = _FakeCuratedAdapter(
         contracts=SimpleNamespace(
-            module=object(),
+            module=_FakeCuratedModule(
+                0, {42: SimpleNamespace(totalAddedKeys=0, totalDepositedKeys=1)}
+            ),
             accounting=object(),
             parameters_registry=object(),
-            meta_registry=_FakeMetaRegistry(),
+            meta_registry=_FakeMetaRegistry(metadata_names={42: "Operator Forty Two"}),
         ),
         notifiable_events={"DistributionLogUpdated"},
     )
-    fetcher = _FakeFetcher(result={})
     event_messages_class = (
         CommunityEventMessages if module_name == "community" else CuratedEventMessages
     )
-    event_messages = event_messages_class(adapter, distribution_log_fetcher=fetcher)
-    event = Event(
+    return event_messages_class(adapter, distribution_log_fetcher=fetcher)
+
+
+def _distribution_log_event():
+    from sentinel.models import Event
+
+    return Event(
         event="DistributionLogUpdated",
         args={"logCid": "cid123"},
         block=123,
@@ -894,12 +896,81 @@ async def test_distribution_log_updated_skips_zero_distributed_rewards(module_na
         transaction_index=4,
     )
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module_name", ["community", "curated"])
+async def test_distribution_log_updated_skips_zero_distributed_rewards_without_strikes(
+    module_name,
+):
+    _set_event_config()
+    fetcher = _FakeFetcher(result={"operators": {"42": {"validators": {"1": {"strikes": 0}}}}})
+    event_messages = _distribution_event_messages(module_name, fetcher)
+
+    plan = await event_messages.get_notification_plan(
+        _distribution_notification(_distribution_log_event(), distributed=0)
+    )
+
+    assert plan is None
+    assert fetcher.calls == ["cid123"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module_name", ["community", "curated"])
+async def test_distribution_log_updated_sends_strikes_for_zero_distributed_rewards(module_name):
+    _set_event_config()
+    payload = {
+        "operators": {
+            "42": {"validators": {"124": {"strikes": 2}}},
+            "777": {"validators": {"900": {"strikes": 0}}},
+        }
+    }
+    event_messages = _distribution_event_messages(module_name, _FakeFetcher(result=payload))
+    event = _distribution_log_event()
+
     plan = await event_messages.get_notification_plan(
         _distribution_notification(event, distributed=0)
     )
 
-    assert plan is None
-    assert fetcher.calls == []
+    assert plan is not None
+    messages = _operator_messages(plan)
+    assert set(messages) == {"42"}
+    assert "Rewards distributed" not in messages["42"]
+    assert "Strikes detected" in messages["42"]
+    assert "Validators with strikes: `1`" in messages["42"]
+    assert messages["42"].endswith(await event_messages.event_footer(event))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module_name", ["community", "curated"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"operators": ["42"]},
+        {"operators": {"42": {"validators": {"124": {"strikes": "many"}}}}},
+        {"operators": {"not-an-id": {"validators": {"124": {"strikes": 2}}}}},
+    ],
+)
+@pytest.mark.parametrize("distributed", [0, 1])
+async def test_distribution_log_updated_falls_back_on_malformed_log(
+    module_name,
+    payload,
+    distributed,
+):
+    _set_event_config()
+    event_messages = _distribution_event_messages(module_name, _FakeFetcher(result=payload))
+    event = _distribution_log_event()
+
+    plan = await event_messages.get_notification_plan(
+        _distribution_notification(event, distributed=distributed)
+    )
+
+    if distributed == 0:
+        assert plan is None
+        return
+    assert plan is not None
+    template = event_messages._require_message_template("DistributionLogUpdated")
+    assert _broadcast(plan) == f"{template()}{await event_messages.event_footer(event)}"
+    assert _broadcast_operator_ids(plan) is None
 
 
 @pytest.mark.asyncio
