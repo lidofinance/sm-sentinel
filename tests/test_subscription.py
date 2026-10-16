@@ -435,6 +435,55 @@ async def test_rpc_disconnect_rebuilds_runtime_and_replays_after_persisted_block
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("head_fails", [False, True])
+async def test_catch_up_leaves_replaced_runtime_to_reconnect_replay(monkeypatch, head_fails):
+    from sentinel.app.module_adapter import build_module_adapter_from_config
+
+    cfg = _make_config()
+    w3 = _FakeW3()
+    set_config(cfg)
+    try:
+        chain = SharedChainConnection(w3)
+        application = SimpleNamespace(
+            bot_data={"block": 123},
+            update_queue=SimpleNamespace(put=AsyncMock()),
+        )
+        supervisor = ModuleRuntimeSupervisor(
+            Mock(side_effect=[w3, _FakeW3()]),
+            config=cfg,
+            chain=chain,
+            health=HealthState(),
+            module_adapter=build_module_adapter_from_config(cfg, w3, chain),
+            storage=lambda: BotStorage(application.bot_data),
+            emit_notification=TelegramNotificationSink(application).emit,
+        )
+        monkeypatch.setattr("sentinel.services.subscription.RPC_RECOVERY_RETRY_SECONDS", 0)
+        replay_blocks = AsyncMock()
+        monkeypatch.setattr(Subscription, "replay_blocks", replay_blocks)
+        original_subscription = supervisor.raw_subscription
+        original_subscription.abort = AsyncMock()
+        listener_error = RpcSubscriptionReconnectRequired.listener_stopped()
+
+        async def head_while_listener_fails() -> int:
+            # The live listener fails while startup catch-up waits for the chain head.
+            await supervisor._restart_after_rpc_disconnect(listener_error)
+            if head_fails:
+                raise listener_error
+            return 130
+
+        original_subscription.get_block_number = AsyncMock(side_effect=head_while_listener_fails)
+
+        await supervisor.catch_up_from(124)
+
+        assert supervisor.raw_subscription is not original_subscription
+        assert supervisor._pending_replay_start_block == 124
+        original_subscription.get_block_number.assert_awaited_once()
+        replay_blocks.assert_not_awaited()
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
 async def test_module_runtime_dispatches_side_effects_before_notification_sink():
     harness = _make_processing_harness(aggregation_group=None, event_names=frozenset())
     calls = []
@@ -719,6 +768,32 @@ async def test_new_head_marks_previous_block_as_complete():
         await subscription._handle_new_head_subscription(SimpleNamespace(result={"number": "0x65"}))
 
         block_consumer.handle_block.assert_awaited_once_with(Block(number=100))
+    finally:
+        clear_config()
+
+
+@pytest.mark.asyncio
+async def test_live_log_removed_by_reorg_is_not_processed_as_new_event(monkeypatch):
+    try:
+        subscription = _make_raw_subscription()
+        subscription._abi_by_topics = {"0xtopic": {"name": "TestEvent"}}  # noqa: SLF001
+        event = _make_event(block=100)
+        decode_event = Mock(return_value=event)
+        monkeypatch.setattr("sentinel.rpc.decode_event", decode_event)
+        event_consumer = SimpleNamespace(handle_event=AsyncMock())
+        subscription.add_event_consumer(event_consumer)
+        log = {"topics": ["0xtopic"], "blockNumber": "0x64", "removed": False}
+
+        await subscription._handle_event_log_subscription(
+            SimpleNamespace(result=log | {"removed": True})
+        )
+
+        decode_event.assert_not_called()
+        event_consumer.handle_event.assert_not_awaited()
+
+        await subscription._handle_event_log_subscription(SimpleNamespace(result=log))
+
+        event_consumer.handle_event.assert_awaited_once_with(event)
     finally:
         clear_config()
 

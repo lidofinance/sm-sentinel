@@ -15,6 +15,7 @@ from web3.exceptions import (
     BlockNotFound,
     PersistentConnectionError,
     ProviderConnectionError,
+    TimeExhausted,
     TooManyRequests,
     TransactionNotFound,
     Web3RPCError,
@@ -35,6 +36,8 @@ _RPC_URL_PATTERN = re.compile(r"\b(?:https?|wss?)://[^\s]+", re.IGNORECASE)
 _RPC_TRANSPORT_EXCEPTIONS = (
     PersistentConnectionError,
     ProviderConnectionError,
+    # Raised by persistent providers when an endpoint accepts a request but never answers it.
+    TimeExhausted,
     WebSocketException,
     OSError,
 )
@@ -279,7 +282,11 @@ class RpcEndpointPool:
 
     async def mark_success(self, endpoint: RpcEndpoint) -> None:
         async with self._lock:
-            self._states[endpoint.index].cooldown_until = 0.0
+            state = self._states[endpoint.index]
+            # Candidates are selected only after their cooldown expires, so an active cooldown
+            # means another provider role recorded a failure while this connection was opening.
+            if state.cooldown_until > self._clock():
+                return
             self._preferred_index = endpoint.index
 
     async def record_subscription_transport_failure(self, endpoint: RpcEndpoint) -> bool:

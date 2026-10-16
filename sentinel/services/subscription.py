@@ -311,20 +311,26 @@ class ModuleRuntimeSupervisor:
         return checkpoint.value
 
     async def catch_up_from(self, start_block: int) -> None:
+        # Catch-up owns replay only on the runtime it started with. Once the supervisor replaces
+        # that runtime, its pending reconnect replay covers the range from the checkpoint, and a
+        # second concurrent replay on the replacement would corrupt its live-event buffer.
+        module_runtime = self.module_runtime
         replay_start_block = start_block
         try:
-            while not self._shutdown_requested:
+            while not self._shutdown_requested and self.module_runtime is module_runtime:
                 try:
-                    catchup_head = await self.raw_subscription.get_block_number()
+                    catchup_head = await module_runtime.raw_subscription.get_block_number()
+                    if self.module_runtime is not module_runtime:
+                        return
                     self._catchup_until_block = catchup_head
-                    await self.raw_subscription.replay_blocks(
+                    await module_runtime.raw_subscription.replay_blocks(
                         replay_start_block,
                         end_block=catchup_head,
                         suppress_live_events_until=catchup_head,
                     )
                     return
                 except RpcAvailabilityError as exc:
-                    if self._shutdown_requested:
+                    if self._shutdown_requested or self.module_runtime is not module_runtime:
                         return
                     replay_start_block = max(
                         replay_start_block,

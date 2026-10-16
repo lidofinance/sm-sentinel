@@ -808,7 +808,10 @@ def strikes_penalty_processed(key, key_url, penalty):
 
 @register_event_message("DistributionLogUpdated")
 def distribution_data_updated(
-    node_operator_id: int | None = None, striked_validators: list | None = None
+    node_operator_id: int | None = None,
+    striked_validators: list | None = None,
+    *,
+    rewards_distributed: bool = True,
 ):
     cfg = get_config()
     base_message = Text(
@@ -821,21 +824,20 @@ def distribution_data_updated(
     )
 
     if node_operator_id is not None and striked_validators:
-        return Text(
-            base_message,
-            Text(
-                nl(),
-                "⚠️ ",
-                Bold("Strikes detected for your validators"),
-                nl(),
-                "Node Operator ID: ",
-                Code(str(node_operator_id)),
-                nl(1),
-                "Validators with strikes: ",
-                Code(len(striked_validators)),
-                nl(1),
-            ),
-        ).as_markdown()
+        strikes_message = Text(
+            "⚠️ ",
+            Bold("Strikes detected for your validators"),
+            nl(),
+            "Node Operator ID: ",
+            Code(str(node_operator_id)),
+            nl(1),
+            "Validators with strikes: ",
+            Code(len(striked_validators)),
+            nl(1),
+        )
+        if not rewards_distributed:
+            return strikes_message.as_markdown()
+        return Text(base_message, nl(), strikes_message).as_markdown()
 
     return base_message.as_markdown()
 
