@@ -63,6 +63,8 @@ def parse_distribution_log(payload: DistributionLogPayload) -> DistributionStrik
         operators = entry.get("operators", {}) or {}
         for operator_id, operator_data in operators.items():
             operator_id_str = str(operator_id)
+            if not operator_id_str.isdecimal():
+                raise ValueError(f"Invalid node operator ID in distribution log: {operator_id!r}")
             all_operator_ids.add(operator_id_str)
 
             validators = operator_data.get("validators", {}) or {}

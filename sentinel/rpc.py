@@ -248,6 +248,13 @@ class Subscription:
     async def _handle_event_log_subscription(self, context: LogsSubscriptionContext):
         # web3 stubs type `context.result` too broadly; treat as a log receipt-like mapping.
         result = cast(dict[str, Any], context.result)
+        if result.get("removed"):
+            # A reorg resends orphaned logs with `removed: true`; they are not new occurrences.
+            logger.warning(
+                "Ignoring log removed by chain reorganization",
+                extra={"block": normalize_block_number(result["blockNumber"])},
+            )
+            return
         event_topic = result["topics"][0]
         event_abi = self._abi_by_topics.get(event_topic)
         if not event_abi:
