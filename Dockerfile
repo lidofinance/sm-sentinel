@@ -2,7 +2,7 @@
 
 FROM ghcr.io/astral-sh/uv:0.9.21 AS uv
 
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.12-slim-trixie AS builder
 
 COPY --from=uv /uv /uvx /bin/
 
@@ -25,7 +25,7 @@ ARG BUILD_BRANCH=unknown
 ARG BUILD_COMMIT=unknown
 RUN python -c 'import json, pathlib, sys; pathlib.Path("build-info.json").write_text(json.dumps({"version": sys.argv[1], "branch": sys.argv[2], "commit": sys.argv[3]}) + "\n")' "$BUILD_VERSION" "$BUILD_BRANCH" "$BUILD_COMMIT"
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-trixie AS runtime
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \

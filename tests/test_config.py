@@ -1,16 +1,19 @@
 import subprocess
 import sys
 from datetime import UTC, time
+from pathlib import Path
 
 import pytest
 
 from sentinel.config import get_healthcheck_bind_from_env, load_config_from_env
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_config_can_be_imported_cold():
     result = subprocess.run(
         [sys.executable, "-c", "import sentinel.config"],
-        cwd="/Users/skhomuti/csm-bot/csm-watcher",
+        cwd=REPO_ROOT,
         check=False,
         capture_output=True,
         text=True,
