@@ -1,7 +1,6 @@
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 
-from aiogram.utils.formatting import Bold, Code, Text, TextLink
 from web3.constants import ADDRESS_ZERO
 
 from sentinel.config import get_config
@@ -11,6 +10,10 @@ from sentinel.modules.curated.operator_groups import (
     OperatorGroupChange,
 )
 from sentinel.modules.formatting import (
+    Bold,
+    Code,
+    Text,
+    TextLink,
     block_footer,
     block_footer_tx_only,
     markdown,

@@ -1,8 +1,47 @@
-from aiogram.utils.formatting import Text, TextLink
+from telegram.helpers import escape_markdown
 
 
-def markdown(*args, **kwargs) -> str:
-    return Text(*args, **kwargs).as_markdown()
+class Text:
+    """Telegram MarkdownV2 node: plain children are escaped, nested nodes render themselves."""
+
+    def __init__(self, *body: object) -> None:
+        self._body = body
+
+    def as_markdown(self) -> str:
+        return self._wrap("".join(_render_node(node) for node in self._body))
+
+    def _wrap(self, inner: str) -> str:
+        return inner
+
+
+class Bold(Text):
+    def _wrap(self, inner: str) -> str:
+        return f"*{inner}*"
+
+
+class Code(Text):
+    def _wrap(self, inner: str) -> str:
+        return f"`{inner}`"
+
+
+class TextLink(Text):
+    def __init__(self, *body: object, url: str) -> None:
+        super().__init__(*body)
+        self._url = url
+
+    def _wrap(self, inner: str) -> str:
+        url = escape_markdown(self._url, version=2, entity_type="text_link")
+        return f"[{inner}]({url})"
+
+
+def _render_node(node: object) -> str:
+    if isinstance(node, Text):
+        return node.as_markdown()
+    return escape_markdown(str(node), version=2)
+
+
+def markdown(*args: object) -> str:
+    return Text(*args).as_markdown()
 
 
 def nl(x: int = 2) -> str:

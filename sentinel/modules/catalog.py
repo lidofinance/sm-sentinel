@@ -3,9 +3,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from aiogram.utils.formatting import Bold
-
-from sentinel.modules.formatting import markdown, nl
+from sentinel.modules.formatting import Bold, markdown, nl
 
 
 @dataclass(frozen=True, slots=True)

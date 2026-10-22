@@ -1,10 +1,13 @@
 from enum import StrEnum
 
-from aiogram.utils.formatting import Text, Bold, TextLink, Code
 from web3.constants import ADDRESS_ZERO
 from sentinel.config import get_config
 from sentinel.modules.catalog import EventDefinition, build_grouped_event_list_text
 from sentinel.modules.formatting import (
+    Bold,
+    Code,
+    Text,
+    TextLink,
     block_footer,
     block_footer_tx_only,
     markdown,
