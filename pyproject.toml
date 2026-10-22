@@ -9,7 +9,6 @@ dependencies = [
     "python-telegram-bot[rate-limiter,job-queue]>=21.4",
     "python-dotenv>=1.2.2",
     "tqdm>=4.66.5",
-    "aiogram>=3.12.0",
     "async-lru>=2.0.5",
     "prometheus-client>=0.25.0",
 ]
