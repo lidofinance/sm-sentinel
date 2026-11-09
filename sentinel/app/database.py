@@ -31,6 +31,9 @@ def configure_sqlite(engine: AsyncEngine) -> None:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=FULL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        # Keep sorter spills, statement journals, and temp tables in memory: containers may run
+        # with a read-only root and no writable /tmp. The database and WAL stay on disk.
+        cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.close()
 
     @event.listens_for(engine.sync_engine, "begin")

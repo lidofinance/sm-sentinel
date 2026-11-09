@@ -121,6 +121,7 @@ async def test_migration_matches_orm_schema_and_sqlite_settings(database_factory
         assert await connection.scalar(text("PRAGMA journal_mode")) == "wal"
         assert await connection.scalar(text("PRAGMA synchronous")) == 2
         assert await connection.scalar(text("PRAGMA foreign_keys")) == 1
+        assert await connection.scalar(text("PRAGMA temp_store")) == 2
 
 
 async def test_cancellation_rolls_back_receipt_and_deliveries(database_factory):

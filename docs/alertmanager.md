@@ -216,6 +216,9 @@ with `BEGIN IMMEDIATE` before checking deduplication or queue quotas. Use
 `session.begin_nested()` for explicit savepoints. Each concurrent operation gets its own
 session. Close transactions before Telegram/RPC calls; the worker sends detached delivery
 snapshots. SQLite I/O uses aiosqlite background threads, so lock waits do not block the event loop.
+Connections set `temp_store=MEMORY`: sort spills, statement journals, and temporary tables stay in
+process memory, so a read-only root filesystem needs no writable `/tmp`. The database, WAL, and
+shared-memory files stay in `FILESTORAGE_PATH`.
 
 Schema revisions live in `sentinel/migrations/versions`; do not create tables in repositories
 or edit a revision after release. Generate a revision with
