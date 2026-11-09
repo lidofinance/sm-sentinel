@@ -1,5 +1,3 @@
-from typing import TYPE_CHECKING
-
 from web3 import AsyncWeb3
 
 from sentinel.app.contracts import (
@@ -11,14 +9,6 @@ from sentinel.chain import SharedChainConnection
 from sentinel.modules.base import BaseModuleAdapter
 from sentinel.modules.community.adapter import CommunityModuleAdapter
 from sentinel.modules.curated.adapter import CuratedModuleAdapter
-
-if TYPE_CHECKING:
-    from sentinel.config import Config
-
-__all__ = [
-    "build_module_adapter_from_addresses",
-    "build_module_adapter_from_config",
-]
 
 
 def build_module_adapter_from_addresses(
@@ -48,11 +38,3 @@ def build_module_adapter_from_addresses(
             chain=chain,
         )
     raise RuntimeError(f"Unsupported module type: {addresses.module_type!s}")
-
-
-def build_module_adapter_from_config(
-    cfg: "Config",
-    w3: AsyncWeb3,
-    chain: SharedChainConnection,
-) -> BaseModuleAdapter:
-    return build_module_adapter_from_addresses(cfg.contract_addresses, w3, cfg.module_ui_url, chain)

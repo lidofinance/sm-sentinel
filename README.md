@@ -138,6 +138,9 @@ so you don't need to specify it in the `.env` file.
 
 ## Extra configuration
 
+Omit a numeric or time setting to use its default; an explicitly empty value is invalid.
+Leave optional settings commented out in `.env` until you supply a value.
+
 Pass the `BLOCK_FROM` environment variable to specify the block the bot should start monitoring events from.
 Note that this may result in duplicate events if you set it to a block that the bot has already processed before.
 `BLOCK_FROM=0` allows you to skip processing past blocks and always start from the head.
@@ -151,6 +154,11 @@ issues per second when backfilling. Leave unset to disable throttling.
 
 `DEPOSIT_DIGEST_TIME` sets the daily UTC delivery time for deposited signing key digests.
 Use `HH:MM` format; the default is `09:00`.
+
+## External operator alerts (Alertmanager)
+
+See the [Alertmanager integration guide](docs/alertmanager.md) for setup, authentication,
+payload requirements, delivery behavior, metrics, and SQLite storage.
 
 ## Admin access (ADMIN_IDS)
 

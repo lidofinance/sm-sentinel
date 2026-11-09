@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 import os
 from urllib.request import urlopen
 
@@ -23,7 +25,7 @@ def check_health() -> None:
 
     try:
         with urlopen(url, timeout=HEALTHCHECK_TIMEOUT_SECONDS) as response:
-            if response.status != 200:
+            if response.status != HTTPStatus.OK:
                 raise RuntimeError(f"Health endpoint returned HTTP {response.status}")
     except OSError as exc:
         raise RuntimeError(f"Healthcheck request failed: {exc}") from exc

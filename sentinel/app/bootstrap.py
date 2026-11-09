@@ -6,14 +6,18 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
+from telegram import LinkPreviewOptions
 from telegram.ext import AIORateLimiter, ApplicationBuilder, ContextTypes
+from sentinel.app.alertmanager import AlertmanagerWebhookServer
 from sentinel.app.application import SentinelApplication
 from sentinel.app.build_info import application_user_agent
 from sentinel.app.contracts import discover_contract_addresses, log_discovered_addresses
 from sentinel.app.context import BotContext
+from sentinel.app.chat_migration import ChatMigrationService
+from sentinel.app.database import SentinelDatabase
 from sentinel.app.health import HealthServer, HealthState
 from sentinel.app.logging import register_sensitive_environment, register_sensitive_values
-from sentinel.app.module_adapter import build_module_adapter_from_config
+from sentinel.app.module_adapter import build_module_adapter_from_addresses
 from sentinel.app.runtime import BotRuntime
 from sentinel.app.secrets import load_environment_files
 from sentinel.app.storage import BotStorage, RuntimeIdentity, create_persistence
@@ -26,6 +30,7 @@ from sentinel.chain import SharedChainConnection
 from sentinel.config import load_config_from_env, set_config
 from sentinel.utils import normalize_block_number
 from sentinel.handlers.errors import error_handler, build_error_callback
+from sentinel.services.alertmanager import AlertmanagerDeliveryService
 from sentinel.services.subscription import (
     ModuleRuntimeSupervisor,
 )
@@ -92,23 +97,28 @@ async def _persist_initial_checkpoint(
 
 async def create_runtime() -> BotRuntime:
     secret_bundle = load_environment_files()
-    env_cfg = load_config_from_env()
+    cfg = load_config_from_env()
     register_sensitive_environment()
-    register_sensitive_values(env_cfg.token, *env_cfg.web3_socket_providers)
+    register_sensitive_values(
+        cfg.token,
+        *cfg.web3_socket_providers,
+        *(key for source in cfg.alertmanager_webhook_sources for key in source.keys),
+    )
     logger.info(
         "Runtime configuration loaded",
         extra={
             "event": "configuration_loaded",
             "config": {
-                "module_address": env_cfg.module_address,
+                "module_address": cfg.module_address,
                 "rpc_endpoints": [
-                    urlsplit(provider).hostname for provider in env_cfg.web3_socket_providers
+                    urlsplit(provider).hostname for provider in cfg.web3_socket_providers
                 ],
-                "healthcheck_host": env_cfg.healthcheck_host,
-                "healthcheck_port": env_cfg.healthcheck_port,
-                "filestorage_path": env_cfg.filestorage_path,
-                "block_batch_size": env_cfg.block_batch_size,
-                "admin_count": len(env_cfg.admin_ids),
+                "healthcheck_host": cfg.healthcheck_host,
+                "healthcheck_port": cfg.healthcheck_port,
+                "filestorage_path": cfg.filestorage_path,
+                "block_batch_size": cfg.block_batch_size,
+                "admin_count": len(cfg.admin_ids),
+                "alertmanager_source_count": len(cfg.alertmanager_webhook_sources),
                 "secret_bundle_version": (None if secret_bundle is None else secret_bundle.version),
             },
         },
@@ -117,13 +127,13 @@ async def create_runtime() -> BotRuntime:
     health = HealthState()
     health_server = HealthServer(
         health,
-        host=env_cfg.healthcheck_host,
-        port=env_cfg.healthcheck_port,
+        host=cfg.healthcheck_host,
+        port=cfg.healthcheck_port,
     )
     health_server.start()
     heartbeat_task = asyncio.create_task(health.heartbeat_loop())
 
-    rpc_endpoint_pool = RpcEndpointPool(env_cfg.web3_socket_providers)
+    rpc_endpoint_pool = RpcEndpointPool(cfg.web3_socket_providers)
     reads_provider = FallbackRequestProvider(
         rpc_endpoint_pool, role="reads", observer=DEFAULT_METRICS.rpc
     )
@@ -152,9 +162,8 @@ async def create_runtime() -> BotRuntime:
         chain_id = rpc_endpoint_pool.chain_id
         if chain_id is None:
             raise RuntimeError("RPC chain ID is unavailable after endpoint validation")
-        addresses = await discover_contract_addresses(rpc_provider, env_cfg.module_address)
+        addresses = await discover_contract_addresses(rpc_provider, cfg.module_address)
         log_discovered_addresses(addresses)
-        cfg = env_cfg.resolve(addresses)
         set_config(cfg)
 
         if cfg.token is None:
@@ -192,7 +201,9 @@ async def create_runtime() -> BotRuntime:
         )
 
         chain = SharedChainConnection(rpc_provider)
-        module_adapter = build_module_adapter_from_config(cfg, rpc_provider, chain)
+        module_adapter = build_module_adapter_from_addresses(
+            addresses, rpc_provider, cfg.module_ui_url, chain
+        )
 
         @cache
         def storage() -> BotStorage:
@@ -225,6 +236,39 @@ async def create_runtime() -> BotRuntime:
         )
         DEFAULT_METRICS.aggregation.bind(lambda: len(storage().aggregation_windows.pending()))
 
+        async def send_alert_message(chat_id: int, message: str) -> None:
+            await application.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=None,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+
+        runtime_identity = RuntimeIdentity(
+            chain_id=chain_id,
+            module_address=addresses.module,
+            module_type=addresses.module_type,
+        )
+        database = SentinelDatabase(storage_path / "sentinel.sqlite3", runtime_identity)
+        chat_migrations = ChatMigrationService(application, database)
+        alertmanager_service = AlertmanagerDeliveryService(
+            metrics=DEFAULT_METRICS.alertmanager,
+            source_ids=frozenset(source.source_id for source in cfg.alertmanager_webhook_sources),
+            chain_id=chain_id,
+            module_adapter=module_adapter,
+            database=database,
+            chat_migrations=chat_migrations,
+            resolve_chats=lambda operator_id: storage().resolve_target_chats({operator_id}),
+            send_message=send_alert_message,
+        )
+        alertmanager_server = AlertmanagerWebhookServer(
+            metrics=DEFAULT_METRICS.alertmanager,
+            sources=cfg.alertmanager_webhook_sources,
+            service=alertmanager_service,
+            host=cfg.alertmanager_webhook_host,
+            port=cfg.alertmanager_webhook_port,
+        )
+
         runtime = BotRuntime(
             application=application,
             module_supervisor=module_supervisor,
@@ -234,11 +278,11 @@ async def create_runtime() -> BotRuntime:
             health=health,
             health_server=health_server,
             heartbeat_task=heartbeat_task,
-            runtime_identity=RuntimeIdentity(
-                chain_id=chain_id,
-                module_address=addresses.module,
-                module_type=addresses.module_type,
-            ),
+            runtime_identity=runtime_identity,
+            chat_migrations=chat_migrations,
+            alertmanager_service=alertmanager_service,
+            alertmanager_server=alertmanager_server,
+            database=database,
         )
         application.attach_runtime(runtime)
         return runtime
@@ -276,10 +320,13 @@ async def _run(runtime: BotRuntime) -> None:
 
     heartbeat_task = runtime.heartbeat_task
     module_supervisor_task: asyncio.Task[None] | None = None
+    worker: asyncio.Task[None] | None = None
     polling_started = False
     try:
         await _bind_persistence_runtime(application, runtime.runtime_identity)
+        await runtime.database.open()
         migrate_legacy_storage(application.bot_data)
+        await runtime.chat_migrations.recover()
         persisted_block = application.bot_data.get("block")
         module_supervisor.ensure_state_containers()
         runtime.health.mark_warmup_started()
@@ -332,6 +379,20 @@ async def _run(runtime: BotRuntime) -> None:
 
         await job_context.schedule(application)
 
+        if cfg.alertmanager_webhook_sources:
+            await runtime.alertmanager_service.refresh_queue_metrics()
+            worker = asyncio.create_task(
+                runtime.alertmanager_service.run(), name="alertmanager-delivery"
+            )
+        await runtime.alertmanager_server.start()
+        runtime.health.mark_alertmanager_ready()
+        tasks = {module_supervisor_task}
+        if worker is not None:
+            tasks.add(worker)
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if worker is not None and worker in done:
+            await worker
+            raise RuntimeError("Alertmanager delivery worker stopped unexpectedly")
         await module_supervisor_task
     except asyncio.CancelledError:  # pragma: no cover - shutdown guard
         pass
@@ -339,23 +400,34 @@ async def _run(runtime: BotRuntime) -> None:
         runtime.health.mark_fatal_error(exc)
         raise
     finally:
-        runtime.health.mark_shutdown_requested()
-        # Ensure shutdown never hangs on unexpected failures (e.g., subscription startup timeouts).
-        module_supervisor.request_shutdown()
-        if module_supervisor_task is not None and not module_supervisor_task.done():
-            module_supervisor_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await module_supervisor_task
-        heartbeat_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat_task
-        await module_supervisor.close()
-        if polling_started:
-            await updater.stop()
-        await application.stop()
-        await runtime.chain.close()
-        await application.shutdown()
-        runtime.health_server.stop()
+        try:
+            runtime.health.mark_shutdown_requested()
+            runtime.health.mark_alertmanager_not_ready()
+            try:
+                await runtime.alertmanager_server.stop()
+            finally:
+                if worker is not None:
+                    worker.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await worker
+                # Ensure shutdown never hangs on unexpected failures (e.g., subscription startup timeouts).
+                module_supervisor.request_shutdown()
+                if module_supervisor_task is not None and not module_supervisor_task.done():
+                    module_supervisor_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await module_supervisor_task
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
+                await module_supervisor.close()
+                if polling_started:
+                    await updater.stop()
+                await application.stop()
+                await runtime.chain.close()
+                await application.shutdown()
+                runtime.health_server.stop()
+        finally:
+            await runtime.database.close()
 
 
 async def run(runtime: BotRuntime) -> None:

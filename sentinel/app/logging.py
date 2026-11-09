@@ -41,6 +41,7 @@ _SENSITIVE_KEY_NAMES = frozenset(
         "refresh_token",
         "api_key",
         "authorization",
+        "alertmanager_webhook_sources",
     }
 )
 

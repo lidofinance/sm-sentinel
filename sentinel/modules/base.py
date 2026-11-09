@@ -93,8 +93,13 @@ class BaseModuleAdapter:
     async def _fetch_node_operators_count(self) -> int:
         return await self.contracts.module.functions.getNodeOperatorsCount().call()
 
+    @property
+    def staking_module_id(self) -> int | None:
+        """Current registration ID, including discoveries made after startup."""
+        return self._staking_module_id
+
     def staking_module_id_matches(self, event: "Event") -> bool:
-        return event.args["stakingModuleId"] == self._staking_module_id
+        return event.args["stakingModuleId"] == self.staking_module_id
 
     async def refresh_staking_module_id(self) -> None:
         if self._staking_module_id is not None:

@@ -93,6 +93,18 @@ def test_secret_redactor_masks_suffixed_sensitive_mapping_keys() -> None:
     assert redactor.redact({"telegram_bot_token": "value"}) == {"telegram_bot_token": "***"}
 
 
+def test_source_registry_is_treated_as_a_secret(monkeypatch) -> None:
+    from sentinel.app.logging import REDACTOR, register_sensitive_environment
+
+    raw = '{"publisher":["' + "x" * 43 + '"]}'
+    monkeypatch.setenv("ALERTMANAGER_WEBHOOK_SOURCES", raw)
+    register_sensitive_environment()
+    assert REDACTOR.redact({"ALERTMANAGER_WEBHOOK_SOURCES": raw}) == {
+        "ALERTMANAGER_WEBHOOK_SOURCES": "***"
+    }
+    assert raw not in _render("Configuration: " + raw)["message"]
+
+
 def test_secret_redactor_does_not_render_unknown_objects() -> None:
     class SensitiveObject:
         def __str__(self) -> str:

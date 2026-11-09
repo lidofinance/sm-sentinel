@@ -34,13 +34,18 @@ class HealthSnapshot:
     warmup_error: str | None
     shutting_down: bool
     fatal_error: str | None
+    alertmanager_ready: bool
     heartbeat_age_seconds: float
     progress_age_seconds: float | None
     last_subscription_ok_age_seconds: float | None
 
 
 class HealthState:
-    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
         self._clock = clock or time.monotonic
         now = self._clock()
         self._lock = threading.Lock()
@@ -53,6 +58,7 @@ class HealthState:
         self._warmup_error: str | None = None
         self._shutting_down = False
         self._fatal_error: str | None = None
+        self._alertmanager_ready = False
         self._last_heartbeat_at = now
         self._last_progress_at: float | None = None
         self._last_subscription_ok_at: float | None = None
@@ -128,6 +134,14 @@ class HealthState:
         with self._lock:
             self._shutting_down = True
 
+    def mark_alertmanager_ready(self) -> None:
+        with self._lock:
+            self._alertmanager_ready = True
+
+    def mark_alertmanager_not_ready(self) -> None:
+        with self._lock:
+            self._alertmanager_ready = False
+
     def mark_fatal_error(self, exc: BaseException | str) -> None:
         message = str(exc)
         with self._lock:
@@ -162,6 +176,7 @@ class HealthState:
                 and not self._catchup_active
                 and not self._shutting_down
                 and self._fatal_error is None
+                and self._alertmanager_ready
                 and progress_age is not None
                 and progress_age < READINESS_PROGRESS_STALE_AFTER_SECONDS
             )
@@ -177,6 +192,7 @@ class HealthState:
                 warmup_error=self._warmup_error,
                 shutting_down=self._shutting_down,
                 fatal_error=self._fatal_error,
+                alertmanager_ready=self._alertmanager_ready,
                 heartbeat_age_seconds=heartbeat_age,
                 progress_age_seconds=progress_age,
                 last_subscription_ok_age_seconds=subscription_age,
@@ -253,6 +269,7 @@ class HealthServer:
                         "warmup_error": snapshot.warmup_error,
                         "shutting_down": snapshot.shutting_down,
                         "fatal_error": snapshot.fatal_error,
+                        "alertmanager_ready": snapshot.alertmanager_ready,
                         "heartbeat_age_seconds": round(snapshot.heartbeat_age_seconds, 3),
                         "progress_age_seconds": (
                             None
