@@ -125,10 +125,11 @@ def _environment_error(exc: ValidationError) -> RuntimeError:
 
 
 def load_config_from_env() -> Config:
-    values = dict(os.environ)
-    values["WEB3_SOCKET_PROVIDERS"] = values.get("WEB3_SOCKET_PROVIDERS") or values.get(
-        "WEB3_SOCKET_PROVIDER", ""
-    )
+    # An empty value (e.g. `BLOCK_FROM=` in an env file) is the same as an unset variable.
+    values = {name: value for name, value in os.environ.items() if value.strip()}
+    providers = values.get("WEB3_SOCKET_PROVIDERS") or values.get("WEB3_SOCKET_PROVIDER")
+    if providers is not None:
+        values["WEB3_SOCKET_PROVIDERS"] = providers
     data = dict(
         values, EXPLORERS=ExplorerLinks(values.get("ETHERSCAN_URL"), values.get("BEACONCHAIN_URL"))
     )

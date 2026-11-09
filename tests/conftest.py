@@ -108,6 +108,7 @@ def module_adapter_factory(fake_contract_addresses):
 @pytest.fixture
 def chat_migrations_factory():
     from telegram.ext import ApplicationBuilder
+    from sentinel.app.alertmanager_storage import AlertmanagerOutbox
     from sentinel.app.application import SentinelApplication
     from sentinel.app.chat_migration import ChatMigrationService
 
@@ -119,6 +120,6 @@ def chat_migrations_factory():
                 .token("123:TEST")
                 .build()
             )
-        return ChatMigrationService(application, database)
+        return ChatMigrationService(application, database, repositories=(AlertmanagerOutbox,))
 
     return create

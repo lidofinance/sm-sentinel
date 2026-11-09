@@ -36,6 +36,7 @@ async def test_queue_age_survives_restart_and_source_revocation(
         )
         await service.submit("evm", "one", (ALERT,))
         await service.submit("other", "two", (ALERT,))
+        await service.refresh_queue_metrics()
         now[0] = 110.0
         # The real metrics HTTP server scrapes from another thread.
         exposition = (await asyncio.to_thread(generate_latest, registry)).decode()
@@ -74,6 +75,7 @@ async def test_queue_age_survives_restart_and_source_revocation(
                 == 10
             )
         assert await service.deliver_one() is True
+        await service.refresh_queue_metrics()
         assert (
             registry.get_sample_value(
                 "sentinel_alertmanager_pending_deliveries", {"source_id": "evm"}
@@ -126,6 +128,7 @@ async def test_dropped_deliveries_are_counted_and_clear_queue(
         if unsubscribed:
             chats.clear()
         assert await service.deliver_one() is True
+        await service.refresh_queue_metrics()
         assert (
             registry.get_sample_value(
                 "sentinel_alertmanager_deliveries_total",
@@ -167,6 +170,7 @@ async def test_idle_worker_recovers_metrics_after_transient_read_failure(
     )
     if after_delivery:
         await service.submit("evm", "batch", (ALERT,))
+        await service.refresh_queue_metrics()
     original = AlertmanagerOutbox.queue_state
     reads = 0
 
@@ -179,9 +183,10 @@ async def test_idle_worker_recovers_metrics_after_transient_read_failure(
         return rows
 
     monkeypatch.setattr(AlertmanagerOutbox, "queue_state", flaky_read)
-    monkeypatch.setattr("sentinel.services.alertmanager.METRICS_RETRY_SECONDS", 0.01)
+    monkeypatch.setattr("sentinel.services.alertmanager.METRICS_REFRESH_SECONDS", 0.01)
     if after_delivery:
         assert await service.deliver_one()
+        await service.refresh_queue_metrics()
         assert (
             registry.get_sample_value(
                 "sentinel_alertmanager_pending_deliveries", {"source_id": "evm"}
@@ -218,3 +223,51 @@ async def test_idle_worker_recovers_metrics_after_transient_read_failure(
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
+
+
+async def test_worker_coalesces_queue_metric_refreshes_across_deliveries(
+    database_factory, module_adapter_factory, chat_migrations_factory, monkeypatch
+):
+    from sentinel.app.alertmanager_storage import AlertmanagerOutbox
+
+    database = await database_factory()
+    registry = CollectorRegistry()
+    sender = AsyncMock()
+    service = AlertmanagerDeliveryService(
+        database=database,
+        chat_migrations=chat_migrations_factory(database),
+        chain_id=1,
+        module_adapter=module_adapter_factory(),
+        metrics=AppMetrics(registry).alertmanager,
+        source_ids=frozenset({"evm"}),
+        resolve_chats=lambda _: {100, 200, 300},
+        send_message=sender,
+    )
+    original = AlertmanagerOutbox.queue_state
+    reads = 0
+
+    async def counted_read(outbox):
+        nonlocal reads
+        reads += 1
+        return await original(outbox)
+
+    monkeypatch.setattr(AlertmanagerOutbox, "queue_state", counted_read)
+    monkeypatch.setattr("sentinel.services.alertmanager.METRICS_REFRESH_SECONDS", 0.3)
+    await service.submit("evm", "batch", (ALERT,))
+    assert reads == 0
+    worker = asyncio.create_task(service.run())
+    try:
+        async with asyncio.timeout(3):
+            while (
+                registry.get_sample_value(
+                    "sentinel_alertmanager_pending_deliveries", {"source_id": "evm"}
+                )
+                != 0
+            ):
+                await asyncio.sleep(0.01)
+        assert sender.await_count == 3
+        assert reads == 1
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+        await database.close()

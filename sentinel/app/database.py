@@ -54,6 +54,7 @@ class SentinelDatabase:
         self.path = path
         self.identity = identity
         self._engine: AsyncEngine | None = None
+        self._sessions: async_sessionmaker[AsyncSession] | None = None
 
     @property
     def engine(self) -> AsyncEngine:
@@ -69,6 +70,7 @@ class SentinelDatabase:
             connect_args={"timeout": 5},
         )
         configure_sqlite(self.engine)
+        self._sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         try:
             async with self.engine.connect() as connection:
                 await connection.execution_options(sqlite_write=True)
@@ -114,7 +116,9 @@ class SentinelDatabase:
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
         """One session per operation/task; close read transactions before external I/O."""
-        async with async_sessionmaker(self.engine, expire_on_commit=False)() as session:
+        if self._sessions is None:
+            raise RuntimeError("Sentinel database is not open")
+        async with self._sessions() as session:
             yield session
 
     @asynccontextmanager
@@ -130,6 +134,7 @@ class SentinelDatabase:
             yield session
 
     async def close(self) -> None:
+        self._sessions = None
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None

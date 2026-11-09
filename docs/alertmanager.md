@@ -145,7 +145,9 @@ not completed Telegram delivery. Pending messages survive restarts and cancellat
 subscriptions are rechecked before sending. Sending relies on PTB and the shared
 `AIORateLimiter(max_retries=5)`, which retries `RetryAfter` and can pause all bot sends.
 Sentinel adds no delivery retries: a final Telegram error is logged, counted as `failed`,
-and removed from the outbox. The message may remain undelivered. A crash after Telegram
+and removed from the outbox. The message may remain undelivered. Other delivery worker errors,
+such as a temporarily unavailable database, are logged and retried with a backoff of up to
+60 seconds; they do not stop the bot or chain monitoring. A crash after Telegram
 accepts a message but before its acknowledgement is stored can produce a duplicate.
 Keep the persistence directory mounted, and run one bot process per directory. The shared
 database identity binds all persisted state, including the outbox, to the instance's chain
@@ -189,8 +191,9 @@ The existing `/metrics` endpoint also exports these feature metrics:
 Source labels come from authenticated identities; unauthenticated requests use an empty
 `source_id`. Keys, chat IDs, and payload labels are never metric labels. Queue gauges are
 restored from SQLite at startup, and retries do not reset message age. Counters reset on
-process restart. If the SQL read used to refresh queue gauges fails, the previous values remain
-until a successful refresh; the worker retries the refresh every five seconds even when the
+process restart. The delivery worker refreshes queue gauges at most once every five seconds
+after the queue changes, so they can lag the outbox by up to five seconds. If the SQL read
+fails, the previous values remain and the worker retries five seconds later, even when the
 queue is empty. Committed requests and delivery continue. Delivery outcomes count calls after
 PTB returns, while the existing
 `sentinel_telegram_*` metrics continue to measure individual HTTP attempts within PTB.
@@ -202,7 +205,9 @@ and chain/module runtime identity. Startup checks existing database ownership be
 Alembic. Schema upgrades and initial identity binding share one transaction, including when
 the webhook receiver is disabled. Repositories receive a session and use namespaced tables;
 the Alertmanager outbox is its first consumer with
-`alertmanager_requests` and `alertmanager_deliveries`.
+`alertmanager_requests` and `alertmanager_deliveries`. A repository that stores Telegram chat IDs
+subclasses `ChatScopedRepository` and is registered with `ChatMigrationService` in bootstrap,
+so chat migrations move its rows in the same transaction as the journal entry.
 Stopping the webhook listener does not close the application database.
 
 Use `async with database.transaction() as session` and pass the same session to participating

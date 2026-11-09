@@ -667,3 +667,43 @@ async def test_idle_worker_waits_without_polling_and_wakes_for_new_deliveries(
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
+
+
+async def test_worker_survives_errors_and_retries_with_backoff(
+    database, module_adapter_factory, chat_migrations_factory, monkeypatch
+):
+    from sqlalchemy.exc import OperationalError
+
+    sender = AsyncMock()
+    service = AlertmanagerDeliveryService(
+        database=database,
+        chat_migrations=chat_migrations_factory(database),
+        chain_id=1,
+        module_adapter=module_adapter_factory(),
+        metrics=AlertmanagerMetrics(CollectorRegistry()),
+        source_ids=frozenset({"evm"}),
+        resolve_chats=lambda _: {100},
+        send_message=sender,
+    )
+    await service.submit("evm", "batch", (make_alert(),))
+    deliver_one = service.deliver_one
+    failures = [OperationalError("next", {}, Exception("locked")), RuntimeError("bug")]
+
+    async def flaky_delivery():
+        if failures:
+            raise failures.pop(0)
+        return await deliver_one()
+
+    monkeypatch.setattr(service, "deliver_one", flaky_delivery)
+    monkeypatch.setattr("sentinel.services.alertmanager.WORKER_RETRY_INITIAL_SECONDS", 0.01)
+    worker = asyncio.create_task(service.run())
+    try:
+        async with asyncio.timeout(3):
+            while sender.await_count == 0:
+                await asyncio.sleep(0.01)
+        assert failures == []
+        assert await pending_count(database) == 0
+        assert not worker.done()
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)

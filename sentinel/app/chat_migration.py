@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from sentinel.app.alertmanager_storage import AlertmanagerOutbox
 from sentinel.app.database import SentinelDatabase
 from sentinel.app.database_models import ChatMigrationRow
 from sentinel.app.storage import BotStorage, ChatStorage
@@ -17,10 +18,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ChatMigrationConflict(ValueError):
+    """Telegram reported a destination that differs from the recorded migration."""
+
+
+class ChatScopedRepository(ABC):
+    """Session-bound SQLite storage whose rows reference Telegram chat IDs."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @abstractmethod
+    async def migrate_chat_id(self, old_chat_id: int, new_chat_id: int) -> None:
+        """Move rows to the new chat ID inside the caller's migration transaction."""
+
+
 class ChatMigrationService:
-    def __init__(self, application: "SentinelApplication", database: SentinelDatabase) -> None:
+    def __init__(
+        self,
+        application: "SentinelApplication",
+        database: SentinelDatabase,
+        repositories: tuple[type[ChatScopedRepository], ...],
+    ) -> None:
         self._application = application
         self._database = database
+        self._repositories = repositories
         # Queue selection/fan-out must see subscriptions and persisted chat IDs together.
         # Never hold this lock during a Telegram request.
         self.state_lock = asyncio.Lock()
@@ -46,8 +68,11 @@ class ChatMigrationService:
             if previous is None:
                 session.add(ChatMigrationRow(old_chat_id=old_chat_id, new_chat_id=new_chat_id))
             elif previous.new_chat_id != new_chat_id:
-                raise ValueError("Chat migration conflicts with the recorded destination")
-            await AlertmanagerOutbox(session).migrate_chat_id(old_chat_id, new_chat_id)
+                raise ChatMigrationConflict(
+                    "Chat migration conflicts with the recorded destination"
+                )
+            for repository in self._repositories:
+                await repository(session).migrate_chat_id(old_chat_id, new_chat_id)
         self._migrate_subscriptions(old_chat_id, new_chat_id)
 
     async def recover(self) -> None:

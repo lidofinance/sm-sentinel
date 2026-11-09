@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from telegram import LinkPreviewOptions
 from telegram.ext import AIORateLimiter, ApplicationBuilder, ContextTypes
 from sentinel.app.alertmanager import AlertmanagerWebhookServer
+from sentinel.app.alertmanager_storage import AlertmanagerOutbox
 from sentinel.app.application import SentinelApplication
 from sentinel.app.build_info import application_user_agent
 from sentinel.app.contracts import discover_contract_addresses, log_discovered_addresses
@@ -250,7 +251,9 @@ async def create_runtime() -> BotRuntime:
             module_type=addresses.module_type,
         )
         database = SentinelDatabase(storage_path / "sentinel.sqlite3", runtime_identity)
-        chat_migrations = ChatMigrationService(application, database)
+        chat_migrations = ChatMigrationService(
+            application, database, repositories=(AlertmanagerOutbox,)
+        )
         alertmanager_service = AlertmanagerDeliveryService(
             metrics=DEFAULT_METRICS.alertmanager,
             source_ids=frozenset(source.source_id for source in cfg.alertmanager_webhook_sources),

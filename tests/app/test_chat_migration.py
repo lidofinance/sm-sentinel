@@ -228,3 +228,19 @@ async def test_cancelled_migration_finishes_before_releasing_state_lock(migrated
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_conflicting_chat_migration_drops_delivery_without_blocking_queue(migrated_chat):
+    state = migrated_chat
+    async with state.database.transaction() as session:
+        session.add(ChatMigrationRow(old_chat_id=-100, new_chat_id=-200))
+    state.sender.side_effect = [ChatMigrated(-300), None]
+
+    assert await state.service.deliver_one() is True
+    assert await pending(state.database) == [(-100, "second")]
+    assert await state.service.deliver_one() is True
+    assert await pending(state.database) == []
+    assert [call.args for call in state.sender.await_args_list] == [
+        (-100, "first"),
+        (-100, "second"),
+    ]

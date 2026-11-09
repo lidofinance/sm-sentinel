@@ -109,7 +109,7 @@ def test_load_config_reads_healthcheck_envs(monkeypatch):
     assert cfg.healthcheck_port == 18080
 
 
-@pytest.mark.parametrize("port", ["", "0", "65536", "abc", "1.5"])
+@pytest.mark.parametrize("port", ["0", "65536", "abc", "1.5"])
 def test_config_rejects_invalid_healthcheck_port(monkeypatch, port):
     monkeypatch.setenv("WEB3_SOCKET_PROVIDERS", "wss://one.invalid")
     monkeypatch.setenv("MODULE_ADDRESS", "0x1234")
@@ -141,7 +141,7 @@ def test_alertmanager_configuration_is_loaded_without_exposing_keys(monkeypatch)
     assert key not in repr(cfg)
 
 
-@pytest.mark.parametrize("port", ["", "0", "65536", "abc", "1.5"])
+@pytest.mark.parametrize("port", ["0", "65536", "abc", "1.5"])
 def test_alertmanager_rejects_invalid_port(monkeypatch, port):
     monkeypatch.setenv("WEB3_SOCKET_PROVIDERS", "wss://example.invalid/ws")
     monkeypatch.setenv("MODULE_ADDRESS", "0x0000000000000000000000000000000000000001")
@@ -259,20 +259,38 @@ def test_environment_loader_returns_complete_config(monkeypatch):
     assert cfg.explorers.validator("0xcd") == "https://beaconcha.in/validator/0xcd"
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
+def test_environment_treats_empty_values_as_unset(monkeypatch):
+    monkeypatch.setenv("MODULE_ADDRESS", "0x1234")
+    monkeypatch.setenv("WEB3_SOCKET_PROVIDERS", "wss://one.invalid")
+    for name in (
+        "TOKEN",
+        "FILESTORAGE_PATH",
+        "ETHERSCAN_URL",
+        "BEACONCHAIN_URL",
+        "MODULE_UI_URL",
         "BLOCK_FROM",
         "PROCESS_BLOCKS_REQUESTS_PER_SECOND",
         "BLOCK_BATCH_SIZE",
+        "ADMIN_IDS",
+        "HEALTHCHECK_HOST",
         "HEALTHCHECK_PORT",
-        "ALERTMANAGER_WEBHOOK_PORT",
         "DEPOSIT_DIGEST_TIME",
-    ],
-)
-def test_environment_rejects_empty_numeric_and_time_settings(monkeypatch, name):
+        "ALERTMANAGER_WEBHOOK_SOURCES",
+        "ALERTMANAGER_WEBHOOK_HOST",
+        "ALERTMANAGER_WEBHOOK_PORT",
+    ):
+        monkeypatch.setenv(name, " ")
+
+    assert load_config_from_env() == Config(
+        module_address="0x1234", web3_socket_providers=("wss://one.invalid",)
+    )
+
+
+@pytest.mark.parametrize("name", ["MODULE_ADDRESS", "WEB3_SOCKET_PROVIDERS"])
+def test_environment_requires_non_empty_required_settings(monkeypatch, name):
     monkeypatch.setenv("MODULE_ADDRESS", "0x1234")
     monkeypatch.setenv("WEB3_SOCKET_PROVIDERS", "wss://one.invalid")
+    monkeypatch.delenv("WEB3_SOCKET_PROVIDER", raising=False)
     monkeypatch.setenv(name, "")
     with pytest.raises(RuntimeError, match=name):
         load_config_from_env()

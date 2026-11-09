@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 
 from sqlalchemy import delete, func, insert, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from sentinel.app.chat_migration import ChatScopedRepository
 from sentinel.app.database_models import (
     AlertmanagerDeliveryRow,
     AlertmanagerRequestRow,
@@ -28,10 +28,7 @@ class PendingAlertDelivery:
     message: str
 
 
-class AlertmanagerOutbox:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
+class AlertmanagerOutbox(ChatScopedRepository):
     async def pending_count(self) -> int:
         return await self._session.scalar(select(func.count(AlertmanagerDeliveryRow.id))) or 0
 

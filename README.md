@@ -138,8 +138,8 @@ so you don't need to specify it in the `.env` file.
 
 ## Extra configuration
 
-Omit a numeric or time setting to use its default; an explicitly empty value is invalid.
-Leave optional settings commented out in `.env` until you supply a value.
+An empty value (for example `BLOCK_FROM=`) is treated the same as an omitted variable:
+the setting uses its default.
 
 Pass the `BLOCK_FROM` environment variable to specify the block the bot should start monitoring events from.
 Note that this may result in duplicate events if you set it to a block that the bot has already processed before.

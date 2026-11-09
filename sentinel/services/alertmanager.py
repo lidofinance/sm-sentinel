@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from telegram.error import ChatMigrated, TelegramError
 
 from sentinel.alertmanager import OperatorAlert
-from sentinel.app.chat_migration import ChatMigrationService
+from sentinel.app.chat_migration import ChatMigrationConflict, ChatMigrationService
 from sentinel.app.database import SentinelDatabase
 from sentinel.app import alertmanager_storage
 from sentinel.app.alertmanager_storage import AlertmanagerOutbox
@@ -18,7 +18,9 @@ from sentinel.metrics.alertmanager import AlertmanagerMetrics
 from sentinel.modules.base import BaseModuleAdapter
 
 logger = logging.getLogger(__name__)
-METRICS_RETRY_SECONDS = 5
+METRICS_REFRESH_SECONDS = 5
+WORKER_RETRY_INITIAL_SECONDS = 1.0
+WORKER_RETRY_MAX_SECONDS = 60.0
 
 
 class AlertmanagerBatchTooLarge(ValueError):
@@ -59,15 +61,17 @@ class AlertmanagerDeliveryService:
         self._clock = clock
         self._wake = asyncio.Event()
         self._metrics_lock = asyncio.Lock()
-        self._metrics_retry_at: float | None = None
+        self._metrics_refresh_at: float | None = None
 
     async def refresh_queue_metrics(self) -> None:
         async with self._metrics_lock:
+            # Changes committed after this point schedule another refresh.
+            self._metrics_refresh_at = None
             try:
                 async with self._database.session() as session:
                     rows = await AlertmanagerOutbox(session).queue_state()
             except SQLAlchemyError:
-                self._metrics_retry_at = time.monotonic() + METRICS_RETRY_SECONDS
+                self._schedule_metrics_refresh()
                 logger.warning("Unable to refresh Alertmanager queue metrics", exc_info=True)
                 return
             state = {source: (count, oldest) for source, count, oldest in rows}
@@ -75,7 +79,11 @@ class AlertmanagerDeliveryService:
             for source_id in self._metric_sources:
                 count, oldest = state.get(source_id, (0, None))
                 self._metrics.update_queue(source_id, count, oldest)
-            self._metrics_retry_at = None
+
+    def _schedule_metrics_refresh(self) -> None:
+        """Coalesce queue gauge reads instead of scanning the outbox after every change."""
+        if self._metrics_refresh_at is None:
+            self._metrics_refresh_at = time.monotonic() + METRICS_REFRESH_SECONDS
 
     async def submit(self, source_id: str, digest: str, alerts: tuple[OperatorAlert, ...]) -> bool:
         """Accept a batch from a source already identified by the HTTP authenticator."""
@@ -118,25 +126,41 @@ class AlertmanagerDeliveryService:
                             "splitting; reduce the alert group size or annotation length"
                         )
             await outbox.enqueue_new(source_id, digest, deliveries, now=now)
-        await self.refresh_queue_metrics()
+        self._schedule_metrics_refresh()
         self._wake.set()
         return True
 
     async def run(self) -> None:
+        retry_delay = WORKER_RETRY_INITIAL_SECONDS
         while True:
-            self._wake.clear()
-            if self._metrics_retry_at is not None and time.monotonic() >= self._metrics_retry_at:
-                await self.refresh_queue_metrics()
-            if not await self.deliver_one():
-                timeout = (
-                    None
-                    if self._metrics_retry_at is None
-                    else max(0.0, self._metrics_retry_at - time.monotonic())
+            try:
+                await self._run_once()
+            except Exception:
+                # External alerts are optional; their failures must not stop chain monitoring.
+                logger.exception(
+                    "Alertmanager delivery worker failed; retrying",
+                    extra={"retry_in_seconds": retry_delay},
                 )
-                try:
-                    await asyncio.wait_for(self._wake.wait(), timeout=timeout)
-                except TimeoutError:
-                    pass
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, WORKER_RETRY_MAX_SECONDS)
+            else:
+                retry_delay = WORKER_RETRY_INITIAL_SECONDS
+
+    async def _run_once(self) -> None:
+        self._wake.clear()
+        if self._metrics_refresh_at is not None and time.monotonic() >= self._metrics_refresh_at:
+            await self.refresh_queue_metrics()
+        if await self.deliver_one():
+            return
+        timeout = (
+            None
+            if self._metrics_refresh_at is None
+            else max(0.0, self._metrics_refresh_at - time.monotonic())
+        )
+        try:
+            await asyncio.wait_for(self._wake.wait(), timeout=timeout)
+        except TimeoutError:
+            pass
 
     async def deliver_one(self) -> bool:
         async with self._chat_migrations.state_lock:
@@ -153,13 +177,24 @@ class AlertmanagerDeliveryService:
                 self._metrics.deliveries.labels(
                     source_id=delivery.source_id, outcome="unsubscribed"
                 ).inc()
-                await self.refresh_queue_metrics()
+                self._schedule_metrics_refresh()
                 return True
         try:
             await self._send_message(delivery.chat_id, delivery.message)
         except ChatMigrated as exc:
-            await self._chat_migrations.migrate(delivery.chat_id, exc.new_chat_id)
-            outcome = "migrated"
+            try:
+                await self._chat_migrations.migrate(delivery.chat_id, exc.new_chat_id)
+            except ChatMigrationConflict:
+                # A retry would hit the same conflict and block every delivery queued behind it.
+                logger.error(
+                    "Alertmanager delivery chat migration conflicts with the journal",
+                    extra={"source_id": delivery.source_id, "chat_id": delivery.chat_id},
+                )
+                async with self._database.transaction() as session:
+                    await AlertmanagerOutbox(session).complete(delivery)
+                outcome = "failed"
+            else:
+                outcome = "migrated"
         except TelegramError as exc:
             # PTB owns retries; a final error must not start another retry cycle here.
             logger.warning(
@@ -178,5 +213,5 @@ class AlertmanagerDeliveryService:
                 await AlertmanagerOutbox(session).complete(delivery)
             outcome = "sent"
         self._metrics.deliveries.labels(source_id=delivery.source_id, outcome=outcome).inc()
-        await self.refresh_queue_metrics()
+        self._schedule_metrics_refresh()
         return True
