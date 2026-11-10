@@ -1,14 +1,17 @@
 import copy
+import re
 
 import pytest
+from telegram.helpers import escape_markdown
 
 from sentinel.alertmanager import (
     AlertStatus,
     InvalidAlertmanagerWebhook,
     OperatorAlert,
     parse_alertmanager_webhook,
-    split_telegram_text,
+    split_telegram_markdown,
 )
+from sentinel.modules.formatting import Bold, Text
 
 
 @pytest.fixture
@@ -118,27 +121,63 @@ def test_truncated_batch_is_rejected(alertmanager_payload):
         parse_alertmanager_webhook(payload)
 
 
+def visible_text(message: str) -> str:
+    """Telegram's text after parsing the MarkdownV2 subset that alert messages use."""
+    return re.sub(r"\\(.)|\*", lambda match: match.group(1) or "", message, flags=re.DOTALL)
+
+
+def test_message_uses_bot_notification_style(alertmanager_payload):
+    alert = parse_alertmanager_webhook(alertmanager_payload())[0]
+
+    assert alert.messages(source_id="evm-1") == (
+        "🚨 *MissedAttestations*\n\nMissed duties\n30 validators\n\n"
+        "nodeOperatorId: 42\nSource: evm\\-1",
+    )
+
+
+def test_message_without_annotations_has_title_and_footer(alertmanager_payload):
+    payload = alertmanager_payload()
+    payload["alerts"][0]["annotations"] = {}
+    alert = parse_alertmanager_webhook(payload)[0]
+
+    assert alert.messages(source_id="evm") == (
+        "🚨 *MissedAttestations*\n\nnodeOperatorId: 42\nSource: evm",
+    )
+
+
 def test_resolved_is_preserved_as_source_status_without_inferred_recovery(alertmanager_payload):
     payload = alertmanager_payload()
     payload["alerts"][0]["status"] = "resolved"
     alert = parse_alertmanager_webhook(payload)[0]
-    assert "Status: resolved" in alert.messages(source_id="evm")[0]
-    assert "recovered" not in alert.messages(source_id="evm")[0].lower()
+    message = visible_text(alert.messages(source_id="evm")[0])
+    assert message.startswith("ℹ️ MissedAttestations (resolved)\n")
+    assert "recovered" not in message.lower()
 
 
 def test_annotation_text_is_not_interpreted_as_telegram_markup(alertmanager_payload):
     payload = alertmanager_payload()
-    annotation = "<b>30</b> [validators](tg://user?id=1) _*\\"
+    annotation = "<b>30</b> [validators](tg://user?id=1) _*\\`~|>#+-=.!{}"
+    payload["alerts"][0]["labels"]["alertname"] = annotation
     payload["alerts"][0]["annotations"]["description"] = annotation
     alert = parse_alertmanager_webhook(payload)[0]
-    assert annotation in alert.messages(source_id="evm")[0]
+    message = alert.messages(source_id="evm")[0]
+
+    assert f"*{escape_markdown(annotation, version=2)}*" in message
+    assert visible_text(message).count(annotation) == 2
 
 
 def test_long_unicode_messages_preserve_text_within_telegram_limits():
-    text = "😀a" * 5000
-    chunks = split_telegram_text(text)
-    assert "".join(chunks) == text
-    assert all(len(chunk.encode("utf-16-le")) // 2 <= 4000 for chunk in chunks)
+    alert = OperatorAlert(1, 3, "42", "Long_*name", AlertStatus.FIRING, "", "😀a." * 3000)
+    expected = alert.messages(source_id="evm")
+    chunks = split_telegram_markdown([(Bold, "Long_*name"), (Text, "😀a." * 3000)])
+
+    assert len(expected) == 4
+    assert "".join(visible_text(chunk) for chunk in chunks) == "Long_*name" + "😀a." * 3000
+    for chunk in (*chunks, *expected):
+        assert len(visible_text(chunk).encode("utf-16-le")) // 2 <= 4000
+        # Each chunk has complete escapes and entities.
+        assert not chunk.endswith("\\")
+        assert len(re.findall(r"(?<!\\)\*", chunk)) % 2 == 0
 
 
 @pytest.mark.parametrize("value", [True, False, "0", 0.0, None, -1])

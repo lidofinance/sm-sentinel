@@ -98,12 +98,24 @@ For example, the relevant fields of a webhook are:
 }
 ```
 
-Sentinel sends each alert only to existing subscribers of its Node Operator. It forwards
-`alertname`, the per-alert `status`, `annotations.summary`, and `annotations.description` as
-plain text, together with the authenticated publisher ID, without interpreting Telegram
-HTML/Markdown. Group annotations are not forwarded.
-Long text is split to fit Telegram's message limit. `resolved` is displayed as the source's
-status, not interpreted as proof of operator recovery.
+Sentinel sends each alert only to existing subscribers of its Node Operator, in the same style
+as on-chain notifications:
+
+```text
+🚨 MissedAttestations
+
+Missed attestations
+30 validators missed attestations in the last 3 epochs
+
+nodeOperatorId: 42
+Source: evm
+```
+
+The bold title is `alertname`, followed by `annotations.summary` and `annotations.description`
+when present, and the authenticated publisher ID. Labels and annotations are escaped for
+Telegram MarkdownV2, so any HTML/Markdown in them is shown literally. Group annotations are
+not forwarded. Long text is split to fit Telegram's message limit. A `resolved` alert gets
+`ℹ️` and a `(resolved)` suffix: this is the source's status, not proof of operator recovery.
 
 Example Alertmanager configuration for one network/module (adapt the URL and existing routes):
 

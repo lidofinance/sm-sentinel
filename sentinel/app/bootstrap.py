@@ -7,6 +7,7 @@ from typing import cast
 from urllib.parse import urlsplit
 
 from telegram import LinkPreviewOptions
+from telegram.constants import ParseMode
 from telegram.ext import AIORateLimiter, ApplicationBuilder, ContextTypes
 from sentinel.app.alertmanager import AlertmanagerWebhookServer
 from sentinel.app.alertmanager_storage import AlertmanagerOutbox
@@ -241,7 +242,7 @@ async def create_runtime() -> BotRuntime:
             await application.bot.send_message(
                 chat_id=chat_id,
                 text=message,
-                parse_mode=None,
+                parse_mode=ParseMode.MARKDOWN_V2,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
 
