@@ -429,6 +429,41 @@ async def test_payload_cannot_override_authenticated_source(receiver, payload, c
     assert KEY_EVM not in caplog.text
 
 
+def worker_logs(caplog):
+    return [record for record in caplog.records if record.name == "sentinel.services.alertmanager"]
+
+
+async def test_logs_distinguish_unfollowed_queued_duplicate_and_sent(receiver, payload, caplog):
+    unfollowed = copy.deepcopy(payload)
+    unfollowed["alerts"][0]["labels"]["node_operator_id"] = "5555"
+    with caplog.at_level("INFO", logger="sentinel"):
+        response = await receiver.client.post("/webhooks/alertmanager", json=unfollowed)
+        assert response.status == HTTPStatus.ACCEPTED
+        assert (await response.json()) == {"accepted": True, "alerts": 1}
+        for _ in range(2):
+            response = await receiver.client.post("/webhooks/alertmanager", json=payload)
+            assert response.status == HTTPStatus.ACCEPTED
+        await receiver.wait_for_messages(2)
+        # The worker logs a send after committing it, which can trail the Telegram call.
+        async with asyncio.timeout(2):
+            while len(sent := worker_logs(caplog)) < 2:
+                await asyncio.sleep(0.01)
+
+    # The delivery worker logs concurrently with the webhook handler.
+    webhooks = [record for record in caplog.records if record.name == "sentinel.app.alertmanager"]
+    assert [record.getMessage() for record in webhooks] == [
+        "Alertmanager webhook from evm accepted: 1 alerts; no subscribed chats, nothing queued",
+        "Alertmanager webhook from evm accepted: 1 alerts; Messages queued: 2",
+        "Alertmanager webhook from evm is a duplicate; nothing queued",
+    ]
+    assert [record.queued_messages for record in webhooks] == [0, 2, 0]
+    assert [record.getMessage() for record in sent] == [
+        "Alertmanager notification sent to chat 100 for node operator 42; source: evm",
+        "Alertmanager notification sent to chat 300 for node operator 42; source: evm",
+    ]
+    assert all(record.source_id == "evm" for record in sent)
+
+
 async def test_request_limit_is_per_source_including_rotating_keys(receiver, payload, monkeypatch):
     monkeypatch.setattr("sentinel.app.alertmanager.MAX_REQUESTS_PER_SOURCE_PER_MINUTE", 1)
     response = await receiver.client.post("/webhooks/alertmanager", json=payload)

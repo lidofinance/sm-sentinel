@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -13,7 +14,7 @@ from sentinel.alertmanager import OperatorAlert
 from sentinel.app.chat_migration import ChatMigrationConflict, ChatMigrationService
 from sentinel.app.database import SentinelDatabase
 from sentinel.app import alertmanager_storage
-from sentinel.app.alertmanager_storage import AlertmanagerOutbox
+from sentinel.app.alertmanager_storage import AlertmanagerOutbox, PendingAlertDelivery
 from sentinel.metrics.alertmanager import AlertmanagerMetrics
 from sentinel.modules.base import BaseModuleAdapter
 
@@ -33,6 +34,14 @@ class AlertmanagerScopeUnavailable(RuntimeError):
 
 class AlertmanagerScopeMismatch(ValueError):
     """An alert targets a different chain or staking module."""
+
+
+@dataclass(frozen=True, slots=True)
+class AlertmanagerSubmission:
+    """Outcome of an authenticated batch. Zero queued messages means no subscribed chats."""
+
+    accepted: bool
+    queued_messages: int = 0
 
 
 class AlertmanagerDeliveryService:
@@ -85,12 +94,16 @@ class AlertmanagerDeliveryService:
         if self._metrics_refresh_at is None:
             self._metrics_refresh_at = time.monotonic() + METRICS_REFRESH_SECONDS
 
-    async def submit(self, source_id: str, digest: str, alerts: tuple[OperatorAlert, ...]) -> bool:
+    async def submit(
+        self, source_id: str, digest: str, alerts: tuple[OperatorAlert, ...]
+    ) -> AlertmanagerSubmission:
         """Accept a batch from a source already identified by the HTTP authenticator."""
         async with self._chat_migrations.state_lock:
             return await self._submit(source_id, digest, alerts)
 
-    async def _submit(self, source_id: str, digest: str, alerts: tuple[OperatorAlert, ...]) -> bool:
+    async def _submit(
+        self, source_id: str, digest: str, alerts: tuple[OperatorAlert, ...]
+    ) -> AlertmanagerSubmission:
         staking_module_id = self._module_adapter.staking_module_id
         if staking_module_id is None:
             raise AlertmanagerScopeUnavailable("Staking module ID is unavailable")
@@ -109,7 +122,7 @@ class AlertmanagerDeliveryService:
             outbox = AlertmanagerOutbox(session)
             # A retry acknowledges the original recipients, even if subscriptions have since changed.
             if await outbox.has_receipt(source_id, digest, now=now):
-                return False
+                return AlertmanagerSubmission(accepted=False)
             deliveries: list[tuple[str, int, str]] = []
             for alert in alerts:
                 messages = alert.messages(source_id=source_id)
@@ -128,7 +141,7 @@ class AlertmanagerDeliveryService:
             await outbox.enqueue_new(source_id, digest, deliveries, now=now)
         self._schedule_metrics_refresh()
         self._wake.set()
-        return True
+        return AlertmanagerSubmission(accepted=True, queued_messages=len(deliveries))
 
     async def run(self) -> None:
         retry_delay = WORKER_RETRY_INITIAL_SECONDS
@@ -174,6 +187,14 @@ class AlertmanagerDeliveryService:
             if delivery.chat_id not in self._resolve_chats(delivery.node_operator_id):
                 async with self._database.transaction() as session:
                     await AlertmanagerOutbox(session).complete(delivery)
+                logger.info(
+                    "Alertmanager notification dropped: chat %s no longer follows "
+                    "node operator %s; source: %s",
+                    delivery.chat_id,
+                    delivery.node_operator_id,
+                    delivery.source_id,
+                    extra=_delivery_log_context(delivery),
+                )
                 self._metrics.deliveries.labels(
                     source_id=delivery.source_id, outcome="unsubscribed"
                 ).inc()
@@ -211,7 +232,22 @@ class AlertmanagerDeliveryService:
         else:
             async with self._database.transaction() as session:
                 await AlertmanagerOutbox(session).complete(delivery)
+            logger.info(
+                "Alertmanager notification sent to chat %s for node operator %s; source: %s",
+                delivery.chat_id,
+                delivery.node_operator_id,
+                delivery.source_id,
+                extra=_delivery_log_context(delivery),
+            )
             outcome = "sent"
         self._metrics.deliveries.labels(source_id=delivery.source_id, outcome=outcome).inc()
         self._schedule_metrics_refresh()
         return True
+
+
+def _delivery_log_context(delivery: PendingAlertDelivery) -> dict[str, object]:
+    return {
+        "source_id": delivery.source_id,
+        "node_operator_id": delivery.node_operator_id,
+        "chat_id": delivery.chat_id,
+    }

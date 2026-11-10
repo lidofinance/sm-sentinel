@@ -21,6 +21,7 @@ from sentinel.services.alertmanager import (
     AlertmanagerDeliveryService,
     AlertmanagerScopeMismatch,
     AlertmanagerScopeUnavailable,
+    AlertmanagerSubmission,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,7 +172,7 @@ class AlertmanagerWebhookServer:
             return web.json_response({"error": str(exc)}, status=HTTPStatus.UNPROCESSABLE_ENTITY)
         digest = hashlib.sha256(canonical).hexdigest()
         try:
-            accepted = await self._service.submit(source_id, digest, alerts)
+            submission = await self._service.submit(source_id, digest, alerts)
         except AlertmanagerScopeUnavailable as exc:
             return web.json_response({"error": str(exc)}, status=HTTPStatus.SERVICE_UNAVAILABLE)
         except AlertmanagerScopeMismatch as exc:
@@ -186,13 +187,39 @@ class AlertmanagerWebhookServer:
             return web.json_response(
                 {"error": "Delivery queue is unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE
             )
-        logger.info(
-            "Alertmanager webhook accepted",
-            extra={"source_id": source_id, "alert_count": len(alerts), "accepted": accepted},
-        )
+        _log_submission(source_id, len(alerts), submission)
         self._metrics.batches.labels(
-            source_id=source_id, outcome="accepted" if accepted else "duplicate"
+            source_id=source_id, outcome="accepted" if submission.accepted else "duplicate"
         ).inc()
+        # The queued count stays in logs: publishers must not learn who follows an operator.
         return web.json_response(
-            {"accepted": accepted, "alerts": len(alerts)}, status=HTTPStatus.ACCEPTED
+            {"accepted": submission.accepted, "alerts": len(alerts)}, status=HTTPStatus.ACCEPTED
+        )
+
+
+def _log_submission(source_id: str, alert_count: int, submission: AlertmanagerSubmission) -> None:
+    context = {
+        "source_id": source_id,
+        "alert_count": alert_count,
+        "accepted": submission.accepted,
+        "queued_messages": submission.queued_messages,
+    }
+    if not submission.accepted:
+        logger.info(
+            "Alertmanager webhook from %s is a duplicate; nothing queued", source_id, extra=context
+        )
+    elif submission.queued_messages:
+        logger.info(
+            "Alertmanager webhook from %s accepted: %s alerts; Messages queued: %s",
+            source_id,
+            alert_count,
+            submission.queued_messages,
+            extra=context,
+        )
+    else:
+        logger.info(
+            "Alertmanager webhook from %s accepted: %s alerts; no subscribed chats, nothing queued",
+            source_id,
+            alert_count,
+            extra=context,
         )

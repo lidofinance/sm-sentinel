@@ -153,7 +153,11 @@ publishers have independent receipts. Later identical reminders are allowed; an 
 fingerprint is never treated as a permanent notification ID.
 
 An HTTP `202` acknowledges a committed outbox in `FILESTORAGE_PATH/sentinel.sqlite3`,
-not completed Telegram delivery. Pending messages survive restarts and cancellation;
+not completed Telegram delivery. A batch for operators nobody follows is also accepted, with
+nothing queued. The response does not say how many messages were queued, so publishers cannot
+probe subscriptions; the admission log does (`queued_messages`, or `no subscribed chats`), and
+each sent or dropped message is logged with its chat and operator.
+Pending messages survive restarts and cancellation;
 subscriptions are rechecked before sending. Sending relies on PTB and the shared
 `AIORateLimiter(max_retries=5)`, which retries `RetryAfter` and can pause all bot sends.
 Sentinel adds no delivery retries: a final Telegram error is logged, counted as `failed`,

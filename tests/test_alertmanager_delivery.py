@@ -19,6 +19,7 @@ from sentinel.services.alertmanager import (
     AlertmanagerBatchTooLarge,
     AlertmanagerScopeMismatch,
     AlertmanagerScopeUnavailable,
+    AlertmanagerSubmission,
 )
 
 
@@ -104,7 +105,7 @@ async def test_completed_chats_are_not_repeated_after_restart(
             resolve_chats=lambda _: {100, 200},
             send_message=restarted_sender,
         )
-        assert await restarted.submit("evm", "batch", (make_alert(),)) is False
+        assert (await restarted.submit("evm", "batch", (make_alert(),))).accepted is False
         assert await restarted.deliver_one() is True
         assert await restarted.deliver_one() is False
         restarted_sender.assert_awaited_once()
@@ -189,7 +190,7 @@ async def test_cancellation_during_send_keeps_the_delivery(
 
 
 async def test_unsubscribe_is_respected_for_already_queued_deliveries(
-    database, module_adapter_factory, chat_migrations_factory
+    database, module_adapter_factory, chat_migrations_factory, caplog
 ):
     targets = {100}
     sender = AsyncMock()
@@ -205,9 +206,41 @@ async def test_unsubscribe_is_respected_for_already_queued_deliveries(
     )
     await service.submit("evm", "batch", (make_alert(),))
     targets.clear()
-    await service.deliver_one()
+    with caplog.at_level("INFO", logger="sentinel.services.alertmanager"):
+        await service.deliver_one()
     sender.assert_not_awaited()
     assert await pending_count(database) == 0
+    assert caplog.messages == [
+        "Alertmanager notification dropped: chat 100 no longer follows node operator 42; "
+        "source: evm"
+    ]
+
+
+async def test_submission_reports_queued_message_count(
+    database, module_adapter_factory, chat_migrations_factory
+):
+    targets = {"42": {100, 200}, "5555": set()}
+    service = AlertmanagerDeliveryService(
+        chat_migrations=chat_migrations_factory(database),
+        chain_id=1,
+        module_adapter=module_adapter_factory(),
+        metrics=AlertmanagerMetrics(CollectorRegistry()),
+        database=database,
+        source_ids=frozenset({"evm"}),
+        resolve_chats=lambda operator_id: targets[operator_id],
+        send_message=AsyncMock(),
+    )
+
+    assert await service.submit("evm", "nobody", (make_alert("5555"),)) == AlertmanagerSubmission(
+        accepted=True, queued_messages=0
+    )
+    assert await service.submit("evm", "both", (make_alert(),)) == AlertmanagerSubmission(
+        accepted=True, queued_messages=2
+    )
+    assert await service.submit("evm", "both", (make_alert(),)) == AlertmanagerSubmission(
+        accepted=False
+    )
+    assert await pending_count(database) == 2
 
 
 async def test_blocked_bot_does_not_retry_forever(
@@ -244,11 +277,11 @@ async def test_dedup_does_not_suppress_future_reminders_forever(
         send_message=AsyncMock(),
         clock=lambda: now[0],
     )
-    assert await service.submit("evm", "batch", (make_alert(),)) is True
-    assert await service.submit("evm", "batch", (make_alert(),)) is False
+    assert (await service.submit("evm", "batch", (make_alert(),))).accepted is True
+    assert (await service.submit("evm", "batch", (make_alert(),))).accepted is False
     await service.deliver_one()
     now[0] += REQUEST_DEDUP_SECONDS
-    assert await service.submit("evm", "batch", (make_alert(),)) is True
+    assert (await service.submit("evm", "batch", (make_alert(),))).accepted is True
 
 
 async def test_pending_batches_are_deduplicated_even_after_retry_window(
@@ -268,7 +301,7 @@ async def test_pending_batches_are_deduplicated_even_after_retry_window(
     )
     await service.submit("evm", "batch", (make_alert(),))
     now[0] += REQUEST_DEDUP_SECONDS * 10
-    assert await service.submit("evm", "batch", (make_alert(),)) is False
+    assert (await service.submit("evm", "batch", (make_alert(),))).accepted is False
     assert await pending_count(database) == 1
 
 
@@ -312,7 +345,7 @@ async def test_full_queue_accepts_whole_batch_after_capacity_is_released(
         await service.submit("evm", "second", (make_alert(),))
     assert await pending_count(database) == 1
     assert await service.deliver_one() is True
-    assert await service.submit("evm", "second", (make_alert(),)) is True
+    assert (await service.submit("evm", "second", (make_alert(),))).accepted is True
     assert await pending_count(database) == 2
 
 
@@ -353,10 +386,10 @@ async def test_retry_acknowledges_original_batch_when_new_subscribers_exceed_cap
         send_message=AsyncMock(),
         clock=lambda: now[0],
     )
-    assert await service.submit("evm", "batch", (make_alert(),)) is True
+    assert (await service.submit("evm", "batch", (make_alert(),))).accepted is True
     chats.add(200)
     now[0] += elapsed
-    assert await service.submit("evm", "batch", (make_alert(),)) is False
+    assert (await service.submit("evm", "batch", (make_alert(),))).accepted is False
     assert await pending_count(database) == 1
 
 
@@ -376,13 +409,13 @@ async def test_identical_payloads_from_different_sources_have_independent_receip
         send_message=sender,
         clock=lambda: now[0],
     )
-    assert await service.submit("evm", "same", (make_alert(),)) is True
-    assert await service.submit("other", "same", (make_alert(),)) is True
-    assert await service.submit("other", "same", (make_alert(),)) is False
+    assert (await service.submit("evm", "same", (make_alert(),))).accepted is True
+    assert (await service.submit("other", "same", (make_alert(),))).accepted is True
+    assert (await service.submit("other", "same", (make_alert(),))).accepted is False
     await service.deliver_one()
     now[0] += REQUEST_DEDUP_SECONDS
-    assert await service.submit("evm", "same", (make_alert(),)) is True
-    assert await service.submit("other", "same", (make_alert(),)) is False
+    assert (await service.submit("evm", "same", (make_alert(),))).accepted is True
+    assert (await service.submit("other", "same", (make_alert(),))).accepted is False
     assert await pending_count(database) == 2
 
 
@@ -438,7 +471,7 @@ async def test_one_sources_queue_quota_does_not_consume_anothers(
     await service.submit("evm", "one", (make_alert(),))
     with pytest.raises(AlertmanagerOutboxFull):
         await service.submit("evm", "two", (make_alert(),))
-    assert await service.submit("other", "two", (make_alert(),)) is True
+    assert (await service.submit("other", "two", (make_alert(),))).accepted is True
     assert await pending_for_source(database, "evm") == 1
     assert await pending_for_source(database, "other") == 1
 
@@ -464,8 +497,8 @@ async def test_parallel_retries_commit_one_batch_across_sessions(
     results = await asyncio.gather(
         *(services[index % 2].submit("evm", "same", (make_alert(),)) for index in range(8))
     )
-    assert results.count(True) == 1
-    assert results.count(False) == 7
+    assert results.count(AlertmanagerSubmission(accepted=True, queued_messages=2)) == 1
+    assert results.count(AlertmanagerSubmission(accepted=False)) == 7
     assert await pending_count(database) == 2
 
 
@@ -495,7 +528,7 @@ async def test_parallel_batches_cannot_exceed_queue_quota(
         ),
         return_exceptions=True,
     )
-    assert results.count(True) == 1
+    assert results.count(AlertmanagerSubmission(accepted=True, queued_messages=1)) == 1
     assert sum(isinstance(result, AlertmanagerOutboxFull) for result in results) == 1
     assert await pending_count(database) == 1
 
@@ -617,7 +650,7 @@ async def test_persisted_queue_delivers_while_new_webhooks_wait_for_registration
     )
     await adapter.refresh_staking_module_id()
     assert adapter.staking_module_id == 3
-    assert await service.submit("evm", "new", (make_alert(),)) is True
+    assert (await service.submit("evm", "new", (make_alert(),))).accepted is True
 
 
 @pytest.mark.parametrize("submit_before_wait", [False, True])
