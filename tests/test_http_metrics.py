@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from types import SimpleNamespace
 from typing import cast
 
@@ -20,7 +22,7 @@ def _request() -> aiohttp.ClientRequest:
 async def test_http_middleware_records_status_without_path_label() -> None:
     registry = CollectorRegistry()
     middleware = HttpMetricsMiddleware(HttpMetrics(registry))
-    response = cast(aiohttp.ClientResponse, SimpleNamespace(status=200))
+    response = cast(aiohttp.ClientResponse, SimpleNamespace(status=HTTPStatus.OK))
 
     async def handler(_request: aiohttp.ClientRequest) -> aiohttp.ClientResponse:
         return response

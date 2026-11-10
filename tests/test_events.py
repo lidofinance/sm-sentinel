@@ -3,7 +3,7 @@ import pytest
 from types import SimpleNamespace
 
 from sentinel.chain import SharedChainConnection
-from sentinel.config import clear_config, get_config, set_config
+from sentinel.config import ExplorerLinks, clear_config, get_config, set_config
 from sentinel.notifications import (
     BroadcastDelivery,
     NotificationPlan,
@@ -282,9 +282,7 @@ class _FakeCuratedAdapter:
 def _set_event_config():
     set_config(
         SimpleNamespace(
-            beaconchain_url_template="https://beaconcha.in/validator/{}",
-            etherscan_block_url_template="https://etherscan.io/block/{}",
-            etherscan_tx_url_template="https://etherscan.io/tx/{}",
+            explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
             module_ui_url="https://lido.fi",
         )
     )
@@ -763,7 +761,7 @@ async def test_distribution_log_updated_produces_strike_notifications():
 
     set_config(
         SimpleNamespace(
-            etherscan_tx_url_template="https://etherscan.io/tx/{}",
+            explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
             module_ui_url="https://csm.lido.fi",
         )
     )
@@ -833,7 +831,7 @@ async def test_distribution_log_updated_handles_empty_payload():
 
     set_config(
         SimpleNamespace(
-            etherscan_tx_url_template="https://etherscan.io/tx/{}",
+            explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
             module_ui_url="https://csm.lido.fi",
         )
     )
@@ -1076,8 +1074,7 @@ async def test_get_notification_plan_sets_node_operator_target():
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
-        etherscan_block_url_template="https://etherscan.io/block/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
     event_messages.module_adapter = DummyAdapter()
     event_messages.module = _FakeCuratedModule(
@@ -2007,44 +2004,36 @@ def test_subscription_uses_v3_event_bindings_only():
     from web3 import AsyncWeb3
 
     from sentinel.app.contracts import CommunityContractAddresses
-    from sentinel.app.module_adapter import build_module_adapter_from_config
+    from sentinel.app.module_adapter import build_module_adapter_from_addresses
     from sentinel.module_types import ModuleType
     from sentinel.web3_events import build_event_bindings
 
-    cfg = SimpleNamespace(
-        contract_addresses=CommunityContractAddresses(
-            module="0x0000000000000000000000000000000000000001",
-            accounting="0x0000000000000000000000000000000000000002",
-            parameters_registry="0x0000000000000000000000000000000000000003",
-            vebo="0x0000000000000000000000000000000000000004",
-            fee_distributor="0x0000000000000000000000000000000000000005",
-            exit_penalties="0x0000000000000000000000000000000000000006",
-            lido_locator="0x0000000000000000000000000000000000000007",
-            staking_router="0x0000000000000000000000000000000000000008",
-            staking_module_id=1,
-            module_type=ModuleType.COMMUNITY,
-        ),
-        module_ui_url=None,
-        process_blocks_requests_per_second=None,
+    addresses = CommunityContractAddresses(
+        module="0x0000000000000000000000000000000000000001",
+        accounting="0x0000000000000000000000000000000000000002",
+        parameters_registry="0x0000000000000000000000000000000000000003",
+        vebo="0x0000000000000000000000000000000000000004",
+        fee_distributor="0x0000000000000000000000000000000000000005",
+        exit_penalties="0x0000000000000000000000000000000000000006",
+        lido_locator="0x0000000000000000000000000000000000000007",
+        staking_router="0x0000000000000000000000000000000000000008",
+        staking_module_id=1,
+        module_type=ModuleType.COMMUNITY,
     )
-    set_config(cfg)
-    try:
-        w3 = AsyncWeb3()
-        module_adapter = build_module_adapter_from_config(cfg, w3, SharedChainConnection(w3))
-        event_bindings = build_event_bindings(module_adapter)
-        decoded_event_names = {
-            event_abi["name"] for event_abi in event_bindings.abi_by_topics.values()
-        }
-        assert "Initialized" not in decoded_event_names
-        assert "ELRewardsStealingPenaltyReported" not in decoded_event_names
-        assert "WithdrawalSubmitted" not in decoded_event_names
-        assert "GeneralDelayedPenaltyReported" in decoded_event_names
-        assert "ValidatorSlashingReported" in decoded_event_names
-        assert "ModuleFeeDistributed" in decoded_event_names
-        assert "DistributionLogUpdated" in decoded_event_names
-        assert "KeyAllocatedBalanceChanged" not in decoded_event_names
-    finally:
-        clear_config()
+    w3 = AsyncWeb3()
+    module_adapter = build_module_adapter_from_addresses(
+        addresses, w3, None, SharedChainConnection(w3)
+    )
+    event_bindings = build_event_bindings(module_adapter)
+    decoded_event_names = {event_abi["name"] for event_abi in event_bindings.abi_by_topics.values()}
+    assert "Initialized" not in decoded_event_names
+    assert "ELRewardsStealingPenaltyReported" not in decoded_event_names
+    assert "WithdrawalSubmitted" not in decoded_event_names
+    assert "GeneralDelayedPenaltyReported" in decoded_event_names
+    assert "ValidatorSlashingReported" in decoded_event_names
+    assert "ModuleFeeDistributed" in decoded_event_names
+    assert "DistributionLogUpdated" in decoded_event_names
+    assert "KeyAllocatedBalanceChanged" not in decoded_event_names
 
 
 def test_topics_to_follow_deduplicates_compatible_event_topics():
@@ -2106,8 +2095,7 @@ async def test_validator_slashing_reported_handler_formats_pubkey_and_footer():
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
-        beaconchain_url_template="https://beaconcha.in/validator/{}",
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
 
     event = Event(
@@ -2143,8 +2131,7 @@ async def test_validator_exit_request_uses_curve_allowed_exit_delay():
     event_messages.accounting = accounting
     event_messages.parametersRegistry = parameters_registry
     event_messages.cfg = SimpleNamespace(
-        beaconchain_url_template="https://beaconcha.in/validator/{}",
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
 
     event = Event(
@@ -2188,8 +2175,7 @@ async def test_validator_exit_requests_are_batched_per_node_operator():
     event_messages.accounting = accounting
     event_messages.parametersRegistry = parameters_registry
     event_messages.cfg = SimpleNamespace(
-        beaconchain_url_template="https://beaconcha.in/validator/{}",
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
 
     key_1 = "12" * 32
@@ -2249,8 +2235,7 @@ async def test_validator_withdrawals_are_batched_across_five_blocks():
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
-        beaconchain_url_template="https://beaconcha.in/validator/{}",
-        etherscan_block_url_template="https://etherscan.io/block/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
 
     events = tuple(
@@ -2300,8 +2285,7 @@ async def test_validator_exit_delay_processed_accepts_v3_delay_fee_arg():
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.chain = _DummyConnectProvider()
     event_messages.cfg = SimpleNamespace(
-        beaconchain_url_template="https://beaconcha.in/validator/{}",
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
 
     event = Event(
@@ -2330,7 +2314,7 @@ async def test_key_allocated_balance_changed_handler_humanizes_balance():
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.cfg = SimpleNamespace(
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
 
     event = Event(
@@ -2360,8 +2344,7 @@ async def test_deposited_signing_keys_count_changed_handler_renders_aggregated_e
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.cfg = SimpleNamespace(
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
-        etherscan_block_url_template="https://etherscan.io/block/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
     event_messages.module = _FakeCuratedModule(
         0, {42: SimpleNamespace(totalAddedKeys=0, totalDepositedKeys=1)}
@@ -2409,8 +2392,7 @@ async def test_total_signing_keys_count_changed_handler_renders_aggregated_event
 
     event_messages = CommunityEventMessages.__new__(CommunityEventMessages)
     event_messages.cfg = SimpleNamespace(
-        etherscan_tx_url_template="https://etherscan.io/tx/{}",
-        etherscan_block_url_template="https://etherscan.io/block/{}",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
     )
     event_messages.module = SimpleNamespace(
         functions=SimpleNamespace(

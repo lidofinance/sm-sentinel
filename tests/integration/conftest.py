@@ -7,7 +7,6 @@ from sentinel.config import clear_config, get_config, load_config_from_env, set_
 
 from .helpers import (
     AnvilInstance,
-    discover_contract_addresses_from_url,
     start_anvil,
     start_anvil_node,
     stop_anvil,
@@ -15,12 +14,8 @@ from .helpers import (
 
 
 @pytest_asyncio.fixture
-async def resolved_config():
-    env_cfg = load_config_from_env()
-    addresses = await discover_contract_addresses_from_url(
-        env_cfg.web3_socket_providers[0], env_cfg.module_address
-    )
-    cfg = env_cfg.resolve(addresses)
+async def app_config():
+    cfg = load_config_from_env()
     set_config(cfg)
     yield cfg
     clear_config()
@@ -28,7 +23,7 @@ async def resolved_config():
 
 @pytest_asyncio.fixture
 async def anvil_launcher(
-    unused_tcp_port_factory, resolved_config
+    unused_tcp_port_factory, app_config
 ) -> Callable[[int], Awaitable[AnvilInstance]]:
     instances: list[AnvilInstance] = []
     cfg = get_config()

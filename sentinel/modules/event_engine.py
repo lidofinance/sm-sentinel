@@ -65,30 +65,17 @@ class EventMessageEngineBase:
         raise NotImplementedError
 
     def transaction_link(self, event: Event) -> str:
-        tx_template = self._require_template(self.cfg.etherscan_tx_url_template, "ETHERSCAN_URL")
-        return tx_template.format("0x" + event.tx.hex())
+        return self.cfg.explorers.transaction("0x" + event.tx.hex())
 
     def block_link(self, block: int) -> str:
-        block_template = self._require_template(
-            self.cfg.etherscan_block_url_template, "ETHERSCAN_URL"
-        )
-        return block_template.format(block)
+        return self.cfg.explorers.block(block)
 
     def to_hex(self, value) -> str:
         return self.chain.w3.to_hex(value)
 
     def validator_link(self, pubkey) -> tuple[str, str]:
         key = self.to_hex(pubkey)
-        beacon_template = self._require_template(
-            self.cfg.beaconchain_url_template, "BEACONCHAIN_URL"
-        )
-        return key, beacon_template.format(key)
-
-    @staticmethod
-    def _require_template(template: str | None, env_var: str) -> str:
-        if template is None:
-            raise RuntimeError(f"{env_var} must be configured")
-        return template
+        return key, self.cfg.explorers.validator(key)
 
     def _require_message_template(self, event_name: str) -> MessageTemplate:
         template = self.event_messages.get(event_name)

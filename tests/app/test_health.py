@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 import json
 from urllib.error import HTTPError
 from urllib.request import urlopen
@@ -37,6 +39,7 @@ def test_health_state_transitions():
     health.mark_warmup_started()
     health.mark_warmup_complete()
     health.mark_startup_complete()
+    health.mark_alertmanager_ready()
 
     snapshot = health.snapshot()
     assert snapshot.startup_complete is True
@@ -65,6 +68,7 @@ def test_health_state_warmup_failure_is_reported_without_breaking_readiness():
     health.mark_warmup_started()
     health.mark_warmup_failed("cache unavailable")
     health.mark_startup_complete()
+    health.mark_alertmanager_ready()
 
     snapshot = health.snapshot()
 
@@ -81,6 +85,7 @@ def test_health_state_stale_progress_affects_readiness_only():
     health.mark_polling_started()
     health.mark_subscription_active()
     health.mark_startup_complete()
+    health.mark_alertmanager_ready()
 
     clock.advance(READINESS_PROGRESS_STALE_AFTER_SECONDS + 1)
     health.heartbeat()
@@ -106,6 +111,7 @@ def test_health_state_is_not_ready_during_catchup():
     health.mark_polling_started()
     health.mark_subscription_active()
     health.mark_startup_complete()
+    health.mark_alertmanager_ready()
 
     health.mark_catchup_started()
     assert health.snapshot().ready is False
@@ -114,6 +120,27 @@ def test_health_state_is_not_ready_during_catchup():
     health.mark_catchup_complete()
     assert health.snapshot().ready is True
     assert health.snapshot().catchup_active is False
+
+
+def test_webhook_start_gates_readiness_without_extending_startup_or_failing_liveness():
+    health = HealthState()
+    health.mark_polling_started()
+    health.mark_subscription_active()
+    health.mark_startup_complete()
+
+    snapshot = health.snapshot()
+    assert snapshot.startup_complete is True
+    assert snapshot.live is True
+    assert snapshot.ready is False
+    assert snapshot.alertmanager_ready is False
+
+    health.mark_alertmanager_ready()
+    assert health.snapshot().ready is True
+    assert health.snapshot().alertmanager_ready is True
+
+    health.mark_alertmanager_not_ready()
+    assert health.snapshot().ready is False
+    assert health.snapshot().live is True
 
 
 def test_health_server_reports_status_endpoints():
@@ -128,16 +155,17 @@ def test_health_server_reports_status_endpoints():
             urlopen(f"{base_url}/startup", timeout=1)
             raise AssertionError("startup should fail before initialization")
         except HTTPError as exc:
-            assert exc.code == 503
+            assert exc.code == HTTPStatus.SERVICE_UNAVAILABLE
+            assert json.loads(exc.read())["alertmanager_ready"] is False
 
         with urlopen(f"{base_url}/build-info.json", timeout=1) as response:
-            assert response.status == 200
+            assert response.status == HTTPStatus.OK
             assert response.headers["Cache-Control"] == "no-store"
             assert json.loads(response.read()) == build_info
 
         with urlopen(f"{base_url}/metrics", timeout=1) as response:
             payload = response.read()
-            assert response.status == 200
+            assert response.status == HTTPStatus.OK
             assert response.headers["Content-Type"] == CONTENT_TYPE_LATEST
             assert response.headers["Cache-Control"] == "no-store"
             assert response.headers["Content-Length"] == str(len(payload))
@@ -148,19 +176,21 @@ def test_health_server_reports_status_endpoints():
         health.mark_warmup_started()
         health.mark_warmup_complete()
         health.mark_startup_complete()
+        health.mark_alertmanager_ready()
 
         with urlopen(f"{base_url}/ready", timeout=1) as response:
-            assert response.status == 200
+            assert response.status == HTTPStatus.OK
             payload = json.loads(response.read())
             assert payload["warmup_started"] is True
             assert payload["warmup_complete"] is True
             assert payload["warmup_error"] is None
+            assert payload["alertmanager_ready"] is True
 
         health.mark_fatal_error("fatal")
         try:
             urlopen(f"{base_url}/live", timeout=1)
             raise AssertionError("liveness should fail after fatal error")
         except HTTPError as exc:
-            assert exc.code == 503
+            assert exc.code == HTTPStatus.SERVICE_UNAVAILABLE
     finally:
         server.stop()

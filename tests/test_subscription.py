@@ -8,14 +8,12 @@ from hexbytes import HexBytes
 import pytest
 
 from sentinel.app.health import HealthState
-from sentinel.app.contracts import CommunityContractAddresses
 from sentinel.app.telegram_adapters import (
     TelegramNotificationHandler,
     TelegramNotificationSink,
 )
 from sentinel.chain import SharedChainConnection
-from sentinel.config import Config, clear_config, set_config
-from sentinel.module_types import ModuleType
+from sentinel.config import Config, ExplorerLinks, clear_config, set_config
 from sentinel.app.storage import BotStorage
 from sentinel.app.storage_migrations import migrate_legacy_storage
 from sentinel.models import Block, Event, EventHandler, EventNotification
@@ -102,20 +100,8 @@ def _make_config() -> Config:
         web3_socket_providers=("wss://example.invalid",),
         healthcheck_host="0.0.0.0",
         healthcheck_port=8080,
-        contract_addresses=CommunityContractAddresses(
-            module="0x0000000000000000000000000000000000000001",
-            accounting="0x0000000000000000000000000000000000000002",
-            parameters_registry="0x0000000000000000000000000000000000000003",
-            vebo="0x0000000000000000000000000000000000000004",
-            fee_distributor="0x0000000000000000000000000000000000000005",
-            exit_penalties="0x0000000000000000000000000000000000000006",
-            lido_locator="0x0000000000000000000000000000000000000007",
-            staking_router="0x0000000000000000000000000000000000000008",
-            staking_module_id=1,
-            module_type=ModuleType.COMMUNITY,
-        ),
-        etherscan_url="https://etherscan.io",
-        beaconchain_url="https://beaconcha.in",
+        module_address="0x0000000000000000000000000000000000000001",
+        explorers=ExplorerLinks("https://etherscan.io", "https://beaconcha.in"),
         module_ui_url="https://csm.lido.fi",
         block_batch_size=10_000,
         process_blocks_requests_per_second=None,
@@ -320,8 +306,10 @@ def _make_processing_harness(
 
 
 @pytest.mark.asyncio
-async def test_rpc_disconnect_rebuilds_runtime_and_replays_after_persisted_block(monkeypatch):
-    from sentinel.app.module_adapter import build_module_adapter_from_config
+async def test_rpc_disconnect_rebuilds_runtime_and_replays_after_persisted_block(
+    monkeypatch, fake_contract_addresses
+):
+    from sentinel.app.module_adapter import build_module_adapter_from_addresses
 
     cfg = _make_config()
     w3 = _FakeW3()
@@ -330,7 +318,9 @@ async def test_rpc_disconnect_rebuilds_runtime_and_replays_after_persisted_block
     set_config(cfg)
     try:
         chain = SharedChainConnection(w3)
-        module_adapter = build_module_adapter_from_config(cfg, w3, chain)
+        module_adapter = build_module_adapter_from_addresses(
+            fake_contract_addresses(), w3, cfg.module_ui_url, chain
+        )
         application = SimpleNamespace(
             bot_data={"block": 123},
             update_queue=SimpleNamespace(put=AsyncMock()),
@@ -436,8 +426,10 @@ async def test_rpc_disconnect_rebuilds_runtime_and_replays_after_persisted_block
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("head_fails", [False, True])
-async def test_catch_up_leaves_replaced_runtime_to_reconnect_replay(monkeypatch, head_fails):
-    from sentinel.app.module_adapter import build_module_adapter_from_config
+async def test_catch_up_leaves_replaced_runtime_to_reconnect_replay(
+    monkeypatch, head_fails, fake_contract_addresses
+):
+    from sentinel.app.module_adapter import build_module_adapter_from_addresses
 
     cfg = _make_config()
     w3 = _FakeW3()
@@ -453,7 +445,9 @@ async def test_catch_up_leaves_replaced_runtime_to_reconnect_replay(monkeypatch,
             config=cfg,
             chain=chain,
             health=HealthState(),
-            module_adapter=build_module_adapter_from_config(cfg, w3, chain),
+            module_adapter=build_module_adapter_from_addresses(
+                fake_contract_addresses(), w3, cfg.module_ui_url, chain
+            ),
             storage=lambda: BotStorage(application.bot_data),
             emit_notification=TelegramNotificationSink(application).emit,
         )
@@ -1488,15 +1482,17 @@ async def test_unknown_persisted_aggregation_window_is_discarded(caplog):
 
 
 @pytest.mark.asyncio
-async def test_pending_aggregation_uses_replaced_application_bot_data():
-    from sentinel.app.module_adapter import build_module_adapter_from_config
+async def test_pending_aggregation_uses_replaced_application_bot_data(fake_contract_addresses):
+    from sentinel.app.module_adapter import build_module_adapter_from_addresses
 
     cfg = _make_config()
     w3 = _FakeW3()
     set_config(cfg)
     try:
         chain = SharedChainConnection(w3)
-        module_adapter = build_module_adapter_from_config(cfg, w3, chain)
+        module_adapter = build_module_adapter_from_addresses(
+            fake_contract_addresses(), w3, cfg.module_ui_url, chain
+        )
         aggregation_group = AggregationGroup(
             name="total_signing_key_counts",
             window_blocks=3,

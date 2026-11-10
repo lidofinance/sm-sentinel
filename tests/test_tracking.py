@@ -38,10 +38,11 @@ def _migration_message(kind: str):
     )
 
 
-def _build_context(application):
+def _build_context(application, chat_migrations):
     bot_storage = BotStorage(application.bot_data)
     context = SimpleNamespace(
         application=application,
+        runtime=SimpleNamespace(chat_migrations=chat_migrations),
         bot_storage=bot_storage,
         chat_storage=lambda chat_data: ChatStorage(chat_data),
     )
@@ -75,7 +76,9 @@ def _mapped_operator_ids(bot_storage: BotStorage) -> set[str]:
         ("from", "from"),
     ],
 )
-async def test_chat_migration_is_idempotent_for_message_order_and_replay(sequence):
+async def test_chat_migration_is_idempotent_for_message_order_and_replay(
+    sequence, database_factory, chat_migrations_factory
+):
     application = _build_application()
     application.chat_data[OLD_CHAT_ID]["node_operators"] = {"42"}
     application.bot_data.update(
@@ -84,7 +87,9 @@ async def test_chat_migration_is_idempotent_for_message_order_and_replay(sequenc
             "no_ids_to_chats": {"42": {OLD_CHAT_ID}},
         }
     )
-    context, bot_storage = _build_context(application)
+    context, bot_storage = _build_context(
+        application, chat_migrations_factory(await database_factory(), application)
+    )
 
     await _apply_migrations(context, sequence)
 
@@ -99,7 +104,9 @@ async def test_chat_migration_is_idempotent_for_message_order_and_replay(sequenc
     assert _mapped_operator_ids(bot_storage) == set()
 
 
-async def test_chat_migration_merges_preexisting_new_chat_subscriptions():
+async def test_chat_migration_merges_preexisting_new_chat_subscriptions(
+    database_factory, chat_migrations_factory
+):
     application = _build_application()
     application.chat_data[OLD_CHAT_ID]["node_operators"] = {"42"}
     application.chat_data[NEW_CHAT_ID]["node_operators"] = {"7"}
@@ -112,7 +119,9 @@ async def test_chat_migration_merges_preexisting_new_chat_subscriptions():
             },
         }
     )
-    context, bot_storage = _build_context(application)
+    context, bot_storage = _build_context(
+        application, chat_migrations_factory(await database_factory(), application)
+    )
 
     await _apply_migrations(context, ("to",))
 
@@ -121,7 +130,9 @@ async def test_chat_migration_merges_preexisting_new_chat_subscriptions():
     assert OLD_CHAT_ID not in application.chat_data
 
 
-async def test_chat_migration_parity_survives_persistence_restart(tmp_path):
+async def test_chat_migration_parity_survives_persistence_restart(
+    tmp_path, database_factory, chat_migrations_factory
+):
     application = _build_application(tmp_path)
     application.chat_data[OLD_CHAT_ID]["node_operators"] = {"42"}
     application.bot_data.update(
@@ -130,7 +141,9 @@ async def test_chat_migration_parity_survives_persistence_restart(tmp_path):
             "no_ids_to_chats": {"42": {OLD_CHAT_ID}},
         }
     )
-    context, _ = _build_context(application)
+    context, _ = _build_context(
+        application, chat_migrations_factory(await database_factory(), application)
+    )
 
     await _apply_migrations(context, ("to", "from"))
     await application.update_persistence()

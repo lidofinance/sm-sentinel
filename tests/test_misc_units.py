@@ -151,7 +151,7 @@ def test_parse_distribution_log_supports_v1_v2_and_v3_report_shapes():
     },
     clear=True,
 )
-def test_config_parsing_and_templates():
+def test_config_parsing_and_links():
     from sentinel.config import load_config_from_env
 
     cfg = load_config_from_env()
@@ -160,9 +160,9 @@ def test_config_parsing_and_templates():
     assert cfg.block_batch_size == 12345
     assert cfg.process_blocks_requests_per_second == 3.5
     assert cfg.block_from == 789
-    assert cfg.etherscan_block_url_template == "https://etherscan.io/block/{}"
-    assert cfg.etherscan_tx_url_template == "https://etherscan.io/tx/{}"
-    assert cfg.beaconchain_url_template == "https://beaconcha.in/validator/{}"
+    assert cfg.explorers.block(123) == "https://etherscan.io/block/123"
+    assert cfg.explorers.transaction("0xab") == "https://etherscan.io/tx/0xab"
+    assert cfg.explorers.validator("0xcd") == "https://beaconcha.in/validator/0xcd"
 
 
 @pytest.mark.asyncio

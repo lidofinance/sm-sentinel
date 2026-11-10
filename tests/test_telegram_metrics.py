@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,7 +19,7 @@ async def test_request_middleware_records_bot_api_http_attempt():
 
     with patch(
         "telegram.request.HTTPXRequest.do_request",
-        new=AsyncMock(return_value=(200, b"{}")),
+        new=AsyncMock(return_value=(HTTPStatus.OK, b"{}")),
     ):
         await request.do_request(
             "https://api.telegram.org/bot-secret/sendMessage",
