@@ -1,13 +1,19 @@
 """Alertmanager's webhook format with Sentinel's fixed operator routing labels."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, field_validator
 
+from sentinel.modules.formatting import Bold, Text, markdown, nl
+
 MAX_ALERTS_PER_REQUEST = 1000
 TELEGRAM_MESSAGE_UNITS = 4000
+
+# Plain text with the MarkdownV2 node that renders it.
+StyledText: TypeAlias = tuple[type[Text], str]
 
 
 class InvalidAlertmanagerWebhook(ValueError):
@@ -17,6 +23,9 @@ class InvalidAlertmanagerWebhook(ValueError):
 class AlertStatus(StrEnum):
     FIRING = "firing"
     RESOLVED = "resolved"
+
+
+ALERT_STATUS_ICONS = {AlertStatus.FIRING: "🚨", AlertStatus.RESOLVED: "ℹ️"}
 
 
 def _decimal_label(value: object) -> int:
@@ -104,19 +113,21 @@ class OperatorAlert:
     description: str
 
     def messages(self, *, source_id: str) -> tuple[str, ...]:
-        # Annotations are plain text, never Telegram Markdown or HTML.
-        parts = [
-            f"Alert: {self.name}",
-            f"Source: {source_id}",
-            f"Status: {self.status}",
-            f"Node operator: {self.node_operator_id} · "
-            f"Staking module: {self.staking_module_id} · Chain: {self.chain_id}",
-        ]
-        if self.summary:
-            parts.append(self.summary)
-        if self.description:
-            parts.append(self.description)
-        return split_telegram_text("\n\n".join(parts))
+        """Render MarkdownV2 messages in the bot's notification style.
+
+        Labels and annotations are escaped, so their markup is shown literally.
+        """
+        parts: list[StyledText] = [(Text, f"{ALERT_STATUS_ICONS[self.status]} "), (Bold, self.name)]
+        if self.status is AlertStatus.RESOLVED:
+            # The source's status, not proof that the operator recovered.
+            parts.append((Text, " (resolved)"))
+        details = "\n".join(text for text in (self.summary, self.description) if text)
+        if details:
+            parts.append((Text, nl() + details))
+        parts.append(
+            (Text, f"{nl()}nodeOperatorId: {self.node_operator_id}{nl(1)}Source: {source_id}")
+        )
+        return split_telegram_markdown(parts)
 
 
 def parse_alertmanager_webhook(payload: object) -> tuple[OperatorAlert, ...]:
@@ -145,18 +156,25 @@ def parse_alertmanager_webhook(payload: object) -> tuple[OperatorAlert, ...]:
     return tuple(result)
 
 
-def split_telegram_text(text: str) -> tuple[str, ...]:
-    """Respect Telegram's UTF-16 length limit, including supplementary characters."""
-    chunks: list[str] = []
-    start = 0
+def split_telegram_markdown(parts: Sequence[StyledText]) -> tuple[str, ...]:
+    """Split styled text by Telegram's UTF-16 length limit, then render each chunk as MarkdownV2.
+
+    Telegram counts the limit after entity parsing, so splitting happens before escaping and
+    never cuts an escape sequence or entity in half.
+    """
+    chunks: list[list[Text]] = [[]]
     units = 0
-    for index, char in enumerate(text):
-        char_units = 2 if ord(char) > 0xFFFF else 1
-        if units + char_units > TELEGRAM_MESSAGE_UNITS:
-            chunks.append(text[start:index])
-            start = index
-            units = 0
-        units += char_units
-    if start < len(text):
-        chunks.append(text[start:])
-    return tuple(chunks)
+    for style, text in parts:
+        start = 0
+        for index, char in enumerate(text):
+            char_units = 2 if ord(char) > 0xFFFF else 1
+            if units + char_units > TELEGRAM_MESSAGE_UNITS:
+                if index > start:
+                    chunks[-1].append(style(text[start:index]))
+                chunks.append([])
+                start = index
+                units = 0
+            units += char_units
+        if start < len(text):
+            chunks[-1].append(style(text[start:]))
+    return tuple(markdown(*chunk) for chunk in chunks if chunk)

@@ -98,12 +98,24 @@ For example, the relevant fields of a webhook are:
 }
 ```
 
-Sentinel sends each alert only to existing subscribers of its Node Operator. It forwards
-`alertname`, the per-alert `status`, `annotations.summary`, and `annotations.description` as
-plain text, together with the authenticated publisher ID, without interpreting Telegram
-HTML/Markdown. Group annotations are not forwarded.
-Long text is split to fit Telegram's message limit. `resolved` is displayed as the source's
-status, not interpreted as proof of operator recovery.
+Sentinel sends each alert only to existing subscribers of its Node Operator, in the same style
+as on-chain notifications:
+
+```text
+🚨 MissedAttestations
+
+Missed attestations
+30 validators missed attestations in the last 3 epochs
+
+nodeOperatorId: 42
+Source: evm
+```
+
+The bold title is `alertname`, followed by `annotations.summary` and `annotations.description`
+when present, and the authenticated publisher ID. Labels and annotations are escaped for
+Telegram MarkdownV2, so any HTML/Markdown in them is shown literally. Group annotations are
+not forwarded. Long text is split to fit Telegram's message limit. A `resolved` alert gets
+`ℹ️` and a `(resolved)` suffix: this is the source's status, not proof of operator recovery.
 
 Example Alertmanager configuration for one network/module (adapt the URL and existing routes):
 
@@ -141,7 +153,11 @@ publishers have independent receipts. Later identical reminders are allowed; an 
 fingerprint is never treated as a permanent notification ID.
 
 An HTTP `202` acknowledges a committed outbox in `FILESTORAGE_PATH/sentinel.sqlite3`,
-not completed Telegram delivery. Pending messages survive restarts and cancellation;
+not completed Telegram delivery. A batch for operators nobody follows is also accepted, with
+nothing queued. The response does not say how many messages were queued, so publishers cannot
+probe subscriptions; the admission log does (`queued_messages`, or `no subscribed chats`), and
+each sent or dropped message is logged with its chat and operator.
+Pending messages survive restarts and cancellation;
 subscriptions are rechecked before sending. Sending relies on PTB and the shared
 `AIORateLimiter(max_retries=5)`, which retries `RetryAfter` and can pause all bot sends.
 Sentinel adds no delivery retries: a final Telegram error is logged, counted as `failed`,
