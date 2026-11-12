@@ -90,7 +90,7 @@ For example, the relevant fields of a webhook are:
         "node_operator_id": "42"
       },
       "annotations": {
-        "summary": "Missed attestations",
+        "title": "Missed attestations",
         "description": "30 validators missed attestations in the last 3 epochs"
       }
     }
@@ -102,19 +102,20 @@ Sentinel sends each alert only to existing subscribers of its Node Operator, in 
 as on-chain notifications:
 
 ```text
-🚨 MissedAttestations
+🚨 Missed attestations
 
-Missed attestations
 30 validators missed attestations in the last 3 epochs
 
 nodeOperatorId: 42
 Source: evm
 ```
 
-The bold title is `alertname`, followed by `annotations.summary` and `annotations.description`
-when present, and the authenticated publisher ID. Labels and annotations are escaped for
-Telegram MarkdownV2, so any HTML/Markdown in them is shown literally. Group annotations are
-not forwarded. Long text is split to fit Telegram's message limit. A `resolved` alert gets
+The bold first line is `annotations.title`, or `alertname` when the title is missing or blank.
+`annotations.description` is the message body; other annotations such as `summary` are not
+forwarded. The footer has the Node Operator ID and the authenticated publisher ID. Labels and
+annotations are escaped for Telegram MarkdownV2, so any HTML/Markdown in them is shown
+literally. Group annotations are not forwarded. Long text is split to fit Telegram's message
+limit. A `resolved` alert gets
 `ℹ️` and a `(resolved)` suffix: this is the source's status, not proof of operator recovery.
 
 Example Alertmanager configuration for one network/module (adapt the URL and existing routes):

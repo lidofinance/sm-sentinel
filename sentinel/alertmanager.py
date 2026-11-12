@@ -109,21 +109,28 @@ class OperatorAlert:
     node_operator_id: str
     name: str
     status: AlertStatus
-    summary: str
+    title: str
     description: str
+
+    @property
+    def heading(self) -> str:
+        """The `title` annotation, or `alertname` when the source does not provide one."""
+        return self.title if self.title.strip() else self.name
 
     def messages(self, *, source_id: str) -> tuple[str, ...]:
         """Render MarkdownV2 messages in the bot's notification style.
 
         Labels and annotations are escaped, so their markup is shown literally.
         """
-        parts: list[StyledText] = [(Text, f"{ALERT_STATUS_ICONS[self.status]} "), (Bold, self.name)]
+        parts: list[StyledText] = [
+            (Text, f"{ALERT_STATUS_ICONS[self.status]} "),
+            (Bold, self.heading),
+        ]
         if self.status is AlertStatus.RESOLVED:
             # The source's status, not proof that the operator recovered.
             parts.append((Text, " (resolved)"))
-        details = "\n".join(text for text in (self.summary, self.description) if text)
-        if details:
-            parts.append((Text, nl() + details))
+        if self.description:
+            parts.append((Text, nl() + self.description))
         parts.append(
             (Text, f"{nl()}nodeOperatorId: {self.node_operator_id}{nl(1)}Source: {source_id}")
         )
@@ -149,7 +156,7 @@ def parse_alertmanager_webhook(payload: object) -> tuple[OperatorAlert, ...]:
                 node_operator_id=str(labels.node_operator_id),
                 name=labels.alertname,
                 status=alert.status,
-                summary=alert.annotations.get("summary", ""),
+                title=alert.annotations.get("title", ""),
                 description=alert.annotations.get("description", ""),
             )
         )
