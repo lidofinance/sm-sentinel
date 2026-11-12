@@ -23,9 +23,9 @@ from sentinel.services.alertmanager import (
 )
 
 
-def make_alert(operator_id="42", summary="Missed duties"):
+def make_alert(operator_id="42", title="Missed duties"):
     return OperatorAlert(
-        1, 3, operator_id, "MissedAttestations", AlertStatus.FIRING, summary, "30 validators"
+        1, 3, operator_id, "MissedAttestations", AlertStatus.FIRING, title, "30 validators"
     )
 
 
@@ -141,9 +141,7 @@ async def test_final_ptb_error_is_not_retried_and_does_not_block_following_messa
         send_message=sender,
         clock=lambda: now[0],
     )
-    await service.submit(
-        "evm", "batch", (make_alert(summary="First"), make_alert(summary="Second"))
-    )
+    await service.submit("evm", "batch", (make_alert(title="First"), make_alert(title="Second")))
     while await service.deliver_one():
         pass
     assert [call.args[0] for call in sender.await_args_list] == [100, 200, 100, 200]
@@ -364,7 +362,7 @@ async def test_text_splitting_counts_towards_batch_capacity(
         send_message=AsyncMock(),
     )
     with pytest.raises(AlertmanagerBatchTooLarge):
-        await service.submit("evm", "long", (make_alert(summary="x" * 4000),))
+        await service.submit("evm", "long", (make_alert(title="x" * 4000),))
     assert await pending_count(database) == 0
 
 

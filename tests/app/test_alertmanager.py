@@ -42,7 +42,7 @@ def payload():
                     "staking_module_id": "3",
                     "node_operator_id": "42",
                 },
-                "annotations": {"summary": "First operator", "description": "30 validators"},
+                "annotations": {"title": "First operator", "description": "30 validators"},
                 "fingerprint": "abc",
                 "startsAt": "2026-10-29T10:00:00Z",
             }
@@ -183,7 +183,7 @@ async def test_disabled_receiver_lifecycle_needs_no_listener_or_delivery():
 async def test_http_batch_delivers_only_each_operators_text_to_its_subscribers(receiver, payload):
     second = copy.deepcopy(payload["alerts"][0])
     second["labels"]["node_operator_id"] = "7"
-    second["annotations"]["summary"] = "Second operator"
+    second["annotations"]["title"] = "Second operator"
     payload["alerts"].append(second)
     payload["commonAnnotations"] = {"description": "All operators secret"}
 
@@ -356,7 +356,7 @@ async def test_full_queue_rejects_whole_request(receiver, payload, monkeypatch):
     receiver.sender.side_effect = blocked_sender
     response = await receiver.client.post("/webhooks/alertmanager", json=payload)
     assert response.status == HTTPStatus.ACCEPTED
-    payload["alerts"][0]["annotations"]["summary"] = "Next notification"
+    payload["alerts"][0]["annotations"]["title"] = "Next notification"
     response = await receiver.client.post("/webhooks/alertmanager", json=payload)
     assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
     release.set()
@@ -371,7 +371,7 @@ async def test_oversized_fan_out_returns_permanent_error_without_partial_deliver
 ):
     payload["alerts"] = [copy.deepcopy(payload["alerts"][0]) for _ in range(501)]
     for index, alert in enumerate(payload["alerts"]):
-        alert["annotations"]["summary"] = f"Validator {index}"
+        alert["annotations"]["title"] = f"Validator {index}"
     response = await receiver.client.post("/webhooks/alertmanager", json=payload)
     assert response.status == HTTPStatus.UNPROCESSABLE_ENTITY
     assert "fan-out" in (await response.json())["error"]

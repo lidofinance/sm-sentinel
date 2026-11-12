@@ -34,7 +34,7 @@ def alertmanager_payload():
                         "alertname": "MissedAttestations",
                         **label_overrides,
                     },
-                    "annotations": {"summary": "Missed duties", "description": "30 validators"},
+                    "annotations": {"title": "Missed duties", "description": "30 validators"},
                     "startsAt": "2026-10-29T10:00:00Z",
                     "endsAt": "2026-10-29T10:02:00Z",
                     "fingerprint": "abc123",
@@ -130,9 +130,29 @@ def test_message_uses_bot_notification_style(alertmanager_payload):
     alert = parse_alertmanager_webhook(alertmanager_payload())[0]
 
     assert alert.messages(source_id="evm-1") == (
-        "🚨 *MissedAttestations*\n\nMissed duties\n30 validators\n\n"
-        "nodeOperatorId: 42\nSource: evm\\-1",
+        "🚨 *Missed duties*\n\n30 validators\n\nnodeOperatorId: 42\nSource: evm\\-1",
     )
+
+
+@pytest.mark.parametrize("title", [None, "", "  "])
+def test_missing_title_falls_back_to_alertname(alertmanager_payload, title):
+    payload = alertmanager_payload()
+    annotations = payload["alerts"][0]["annotations"]
+    if title is None:
+        del annotations["title"]
+    else:
+        annotations["title"] = title
+    alert = parse_alertmanager_webhook(payload)[0]
+
+    assert alert.messages(source_id="evm")[0].startswith("🚨 *MissedAttestations*\n\n30 validators")
+
+
+def test_only_title_and_description_annotations_are_forwarded(alertmanager_payload):
+    payload = alertmanager_payload()
+    payload["alerts"][0]["annotations"]["summary"] = "Not forwarded"
+    alert = parse_alertmanager_webhook(payload)[0]
+
+    assert "Not forwarded" not in alert.messages(source_id="evm")[0]
 
 
 def test_message_without_annotations_has_title_and_footer(alertmanager_payload):
@@ -150,14 +170,14 @@ def test_resolved_is_preserved_as_source_status_without_inferred_recovery(alertm
     payload["alerts"][0]["status"] = "resolved"
     alert = parse_alertmanager_webhook(payload)[0]
     message = visible_text(alert.messages(source_id="evm")[0])
-    assert message.startswith("ℹ️ MissedAttestations (resolved)\n")
+    assert message.startswith("ℹ️ Missed duties (resolved)\n")
     assert "recovered" not in message.lower()
 
 
 def test_annotation_text_is_not_interpreted_as_telegram_markup(alertmanager_payload):
     payload = alertmanager_payload()
     annotation = "<b>30</b> [validators](tg://user?id=1) _*\\`~|>#+-=.!{}"
-    payload["alerts"][0]["labels"]["alertname"] = annotation
+    payload["alerts"][0]["annotations"]["title"] = annotation
     payload["alerts"][0]["annotations"]["description"] = annotation
     alert = parse_alertmanager_webhook(payload)[0]
     message = alert.messages(source_id="evm")[0]
@@ -225,7 +245,7 @@ def test_optional_wire_fields_keep_defaults(alertmanager_payload):
     del payload["truncatedAlerts"]
     del payload["alerts"][0]["annotations"]
     alert = parse_alertmanager_webhook(payload)[0]
-    assert (alert.summary, alert.description) == ("", "")
+    assert (alert.title, alert.description) == ("", "")
 
 
 def test_wire_validation_preserves_original_payload_for_deduplication(alertmanager_payload):
