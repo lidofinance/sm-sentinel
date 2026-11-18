@@ -190,6 +190,49 @@ def test_curated_module_adapter_instantiation():
     assert fee_distributor_source.event_names == DISTRIBUTION_REPORT_EVENTS
 
 
+def test_curated_module_adapter_batches_top_up_allocation_events_per_block():
+    addresses = _dummy_addresses(ModuleType.CURATED)
+    assert isinstance(addresses, CuratedContractAddresses)
+    result = build_module_adapter_from_addresses(
+        addresses,
+        _FakeW3(),
+        module_ui_url=None,
+        chain=_dummy_chain(),
+    )
+    event_names = {"TopUpAllocationEnabled", "TopUpAllocationDisabled"}
+    module_abi_events = {
+        entry["name"] for entry in result.contract_abis.module if entry["type"] == "event"
+    }
+    assert event_names <= module_abi_events
+    assert event_names <= result.notifiable_events()
+
+    aggregators = {
+        event_name: aggregator
+        for aggregator in result.event_aggregators()
+        for event_name in aggregator.event_names
+    }
+    enabled_aggregator = aggregators["TopUpAllocationEnabled"]
+    assert aggregators["TopUpAllocationDisabled"].group != enabled_aggregator.group
+    events = [
+        Event(
+            event="TopUpAllocationEnabled",
+            args={"nodeOperatorId": node_operator_id},
+            block=123,
+            tx=HexBytes("0xdeadbeef"),
+            address=addresses.module,
+            log_index=node_operator_id,
+            transaction_index=0,
+        )
+        for node_operator_id in range(3)
+    ]
+    disabled_event = replace(events[0], event="TopUpAllocationDisabled", log_index=10)
+
+    notifications = enabled_aggregator.aggregate([*reversed(events), disabled_event])
+
+    assert len(notifications) == 1
+    assert notifications[0].source_events == tuple(events)
+
+
 def test_build_curated_module_adapter_uses_curated_module_abi():
     addresses = _dummy_addresses(ModuleType.CURATED)
     assert isinstance(addresses, CuratedContractAddresses)

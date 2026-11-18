@@ -91,6 +91,16 @@ CURATED_EVENT_CATALOG: list[EventDefinition] = [
         EventGroup.KEY_MANAGEMENT,
     ),
     EventDefinition(
+        "TopUpAllocationEnabled",
+        "- ✅ Top-up allocation enabled",
+        EventGroup.KEY_MANAGEMENT,
+    ),
+    EventDefinition(
+        "TopUpAllocationDisabled",
+        "- ℹ️ Top-up allocation disabled",
+        EventGroup.KEY_MANAGEMENT,
+    ),
+    EventDefinition(
         "NodeOperatorManagerAddressChangeProposed",
         "- ℹ️ New manager address proposed",
         EventGroup.ADDRESS_AND_REWARD_CHANGES,
@@ -510,6 +520,37 @@ def target_validators_count_changed(
                 nl(1),
                 f"Limit changed from {limit_before} to {limit_after}.",
             )
+
+
+def _top_up_allocation_changed(icon: str, title: str, operator_labels: Sequence[str], note: str):
+    parts: list = [icon, Bold(title), nl(), "Node Operators:", nl(1)]
+    for index, operator_label in enumerate(operator_labels):
+        if index:
+            parts.append(nl(1))
+        parts.extend(["- ", operator_label])
+    parts.extend([nl(), note])
+    return markdown(*parts)
+
+
+@register_event_message("TopUpAllocationEnabled")
+def top_up_allocation_enabled(operator_labels: Sequence[str]):
+    return _top_up_allocation_changed(
+        "✅ ",
+        "Top-up allocation enabled",
+        operator_labels,
+        "Validators of these Node Operators are eligible for top-up deposits.",
+    )
+
+
+@register_event_message("TopUpAllocationDisabled")
+def top_up_allocation_disabled(operator_labels: Sequence[str]):
+    return _top_up_allocation_changed(
+        "ℹ️ ",
+        "Top-up allocation disabled",
+        operator_labels,
+        "Validators of these Node Operators will no longer receive top-up deposits. "
+        "Only the Curated Module Committee can enable it again.",
+    )
 
 
 @register_event_message("NodeOperatorManagerAddressChangeProposed")

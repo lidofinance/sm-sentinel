@@ -52,6 +52,8 @@ CURATED_EVENTS = frozenset(
         "GeneralDelayedPenaltyCompensated",
         "ValidatorSlashingReported",
         "ValidatorWithdrawn",
+        "TopUpAllocationEnabled",
+        "TopUpAllocationDisabled",
         # TODO: Remove the temporary release notification after the CMv2 launch.
         "Resumed",
         # CSAccounting
@@ -306,6 +308,8 @@ class CuratedModuleAdapter(BaseModuleAdapter):
             DistributionReportAggregator,
             GlobalEventAggregator,
             NODE_OPERATOR_EFFECTIVE_WEIGHT_CHANGED,
+            TOP_UP_ALLOCATION_DISABLED,
+            TOP_UP_ALLOCATION_ENABLED,
             AggregationGroups,
             OperatorGroupChangeAggregator,
             node_operator_aggregators_from_event_handlers,
@@ -323,5 +327,15 @@ class CuratedModuleAdapter(BaseModuleAdapter):
             GlobalEventAggregator(
                 group=AggregationGroups.BOND_CURVE_WEIGHT_CHANGES,
                 event_names=frozenset({BOND_CURVE_WEIGHT_SET}),
+            ),
+            # finalizeUpgradeV2 emits TopUpAllocationEnabled for every operator with active
+            # keys in one transaction, so each chat gets one summary per block.
+            GlobalEventAggregator(
+                group=AggregationGroups.TOP_UP_ALLOCATIONS_ENABLED,
+                event_names=frozenset({TOP_UP_ALLOCATION_ENABLED}),
+            ),
+            GlobalEventAggregator(
+                group=AggregationGroups.TOP_UP_ALLOCATIONS_DISABLED,
+                event_names=frozenset({TOP_UP_ALLOCATION_DISABLED}),
             ),
         )
