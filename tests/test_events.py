@@ -1670,6 +1670,106 @@ async def test_curated_effective_weight_changes_render_one_summary_per_chat():
     assert "Operator Eleven" not in operator_message
 
 
+def _top_up_allocation_event(event_name: str, node_operator_id: int, *, tx: str, log_index: int):
+    from sentinel.models import Event
+
+    return Event(
+        event=event_name,
+        args={"nodeOperatorId": node_operator_id},
+        block=123,
+        tx=HexBytes(tx),
+        address="0x0000000000000000000000000000000000000001",
+        log_index=log_index,
+        transaction_index=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_curated_top_up_allocation_enabled_in_upgrade_tx_renders_one_summary_per_chat():
+    from sentinel.models import EventNotification
+    from sentinel.modules.curated.events import CuratedEventMessages
+
+    _set_event_config()
+    meta_registry = _FakeMetaRegistry(metadata_names={10: "Operator Ten", 11: "Operator Eleven"})
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            meta_registry=meta_registry,
+        ),
+        notifiable_events={"TopUpAllocationEnabled"},
+    )
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    # finalizeUpgradeV2 emits one event per operator in a single transaction.
+    events = tuple(
+        _top_up_allocation_event(
+            "TopUpAllocationEnabled", node_operator_id, tx="0xdeadbeef", log_index=log_index
+        )
+        for log_index, node_operator_id in enumerate((12, 10, 11))
+    )
+
+    plan = await event_messages.get_notification_plan(EventNotification(source_events=events))
+
+    assert isinstance(plan, NotificationPlan)
+    delivery = _per_chat(plan)
+    assert delivery.operator_ids == {"10", "11", "12"}
+    assert sorted(meta_registry.metadata_ids) == [10, 11, 12]
+    (operator_message,) = delivery.render(frozenset({"10"}))
+    assert operator_message == (
+        "✅ *Top\\-up allocation enabled*\n\n"
+        "Node Operators:\n"
+        "\\- \\#10 \\- Operator Ten\n\n"
+        "Validators of these Node Operators are eligible for top\\-up deposits\\.\n\n"
+        "[Transaction](https://etherscan.io/tx/0xdeadbeef)"
+    )
+    (combined_message,) = delivery.render(frozenset({"10", "11", "12"}))
+    assert (
+        "\\- \\#10 \\- Operator Ten\n\\- \\#11 \\- Operator Eleven\n\\- \\#12\n\n"
+        in combined_message
+    )
+    assert combined_message.count("Transaction") == 1
+    assert delivery.render(frozenset({"99"})) == ()
+
+
+@pytest.mark.asyncio
+async def test_curated_top_up_allocation_disabled_across_transactions_uses_block_footer():
+    from sentinel.models import EventNotification
+    from sentinel.modules.curated.events import CuratedEventMessages
+
+    _set_event_config()
+    meta_registry = _FakeMetaRegistry(metadata_names={10: "Operator Ten", 11: "Operator Eleven"})
+    adapter = _FakeCuratedAdapter(
+        contracts=SimpleNamespace(
+            module=object(),
+            accounting=object(),
+            parameters_registry=object(),
+            meta_registry=meta_registry,
+        ),
+        notifiable_events={"TopUpAllocationDisabled"},
+    )
+    event_messages = CuratedEventMessages(adapter, distribution_log_fetcher=_FakeFetcher(result={}))
+    events = (
+        _top_up_allocation_event("TopUpAllocationDisabled", 10, tx="0x01", log_index=0),
+        _top_up_allocation_event("TopUpAllocationDisabled", 11, tx="0x02", log_index=1),
+    )
+
+    plan = await event_messages.get_notification_plan(EventNotification(source_events=events))
+
+    assert isinstance(plan, NotificationPlan)
+    delivery = _per_chat(plan)
+    assert delivery.operator_ids == {"10", "11"}
+    (operator_message,) = delivery.render(frozenset({"11"}))
+    assert operator_message == (
+        "ℹ️ *Top\\-up allocation disabled*\n\n"
+        "Node Operators:\n"
+        "\\- \\#11 \\- Operator Eleven\n\n"
+        "Validators of these Node Operators will no longer receive top\\-up deposits\\. "
+        "Only the Curated Module Committee can enable it again\\.\n\n"
+        "Block: [123](https://etherscan.io/block/123)"
+    )
+
+
 @pytest.mark.asyncio
 async def test_curated_group_rename_and_weight_change_notify_independently():
     from sentinel.models import Event
