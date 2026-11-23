@@ -15,6 +15,8 @@ OPERATOR_GROUP_UPDATED = "OperatorGroupUpdated"
 OPERATOR_GROUP_CLEARED = "OperatorGroupCleared"
 NODE_OPERATOR_EFFECTIVE_WEIGHT_CHANGED = "NodeOperatorEffectiveWeightChanged"
 BOND_CURVE_WEIGHT_SET = "BondCurveWeightSet"
+TOP_UP_ALLOCATION_ENABLED = "TopUpAllocationEnabled"
+TOP_UP_ALLOCATION_DISABLED = "TopUpAllocationDisabled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +56,14 @@ class AggregationGroups:
     )
     BOND_CURVE_WEIGHT_CHANGES = AggregationGroup(
         name="bond_curve_weight_changes",
+        window_blocks=1,
+    )
+    TOP_UP_ALLOCATIONS_ENABLED = AggregationGroup(
+        name="top_up_allocations_enabled",
+        window_blocks=1,
+    )
+    TOP_UP_ALLOCATIONS_DISABLED = AggregationGroup(
+        name="top_up_allocations_disabled",
         window_blocks=1,
     )
 
