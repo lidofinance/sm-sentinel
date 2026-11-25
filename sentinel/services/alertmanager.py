@@ -14,7 +14,11 @@ from sentinel.alertmanager import OperatorAlert
 from sentinel.app.chat_migration import ChatMigrationConflict, ChatMigrationService
 from sentinel.app.database import SentinelDatabase
 from sentinel.app import alertmanager_storage
-from sentinel.app.alertmanager_storage import AlertmanagerOutbox, PendingAlertDelivery
+from sentinel.app.alertmanager_storage import (
+    AlertmanagerOutbox,
+    AlertmanagerPreferences,
+    PendingAlertDelivery,
+)
 from sentinel.metrics.alertmanager import AlertmanagerMetrics
 from sentinel.modules.base import BaseModuleAdapter
 
@@ -38,7 +42,7 @@ class AlertmanagerScopeMismatch(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class AlertmanagerSubmission:
-    """Outcome of an authenticated batch. Zero queued messages means no subscribed chats."""
+    """Outcome of an authenticated batch. Zero queued messages means no eligible chats."""
 
     accepted: bool
     queued_messages: int = 0
@@ -123,10 +127,16 @@ class AlertmanagerDeliveryService:
             # A retry acknowledges the original recipients, even if subscriptions have since changed.
             if await outbox.has_receipt(source_id, digest, now=now):
                 return AlertmanagerSubmission(accepted=False)
+            disabled_recipients = await AlertmanagerPreferences(session).disabled_recipients(
+                source_id
+            )
             deliveries: list[tuple[str, int, str]] = []
             for alert in alerts:
+                recipients = self._resolve_chats(alert.node_operator_id) - disabled_recipients
+                if not recipients:
+                    continue
                 messages = alert.messages(source_id=source_id)
-                for chat_id in sorted(self._resolve_chats(alert.node_operator_id)):
+                for chat_id in sorted(recipients):
                     deliveries.extend(
                         (alert.node_operator_id, chat_id, message) for message in messages
                     )
@@ -181,15 +191,19 @@ class AlertmanagerDeliveryService:
                 delivery = await AlertmanagerOutbox(session).next_pending(
                     source_ids=self._source_ids
                 )
-            if delivery is None:
-                return False
-            # Respect unsubscribe and removed chats even for notifications queued before a restart.
-            if delivery.chat_id not in self._resolve_chats(delivery.node_operator_id):
+                if delivery is None:
+                    return False
+                # Recheck Alertmanager preferences and subscriptions for queued notifications.
+                subscribed = delivery.chat_id in self._resolve_chats(delivery.node_operator_id)
+                eligible = subscribed and not await AlertmanagerPreferences(session).is_disabled(
+                    delivery.chat_id, delivery.source_id
+                )
+            if not eligible:
                 async with self._database.transaction() as session:
                     await AlertmanagerOutbox(session).complete(delivery)
                 logger.info(
-                    "Alertmanager notification dropped: chat %s no longer follows "
-                    "node operator %s; source: %s",
+                    "Alertmanager notification dropped: chat %s is no longer eligible "
+                    "for node operator %s; source: %s",
                     delivery.chat_id,
                     delivery.node_operator_id,
                     delivery.source_id,

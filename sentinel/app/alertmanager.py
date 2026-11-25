@@ -218,7 +218,7 @@ def _log_submission(source_id: str, alert_count: int, submission: AlertmanagerSu
         )
     else:
         logger.info(
-            "Alertmanager webhook from %s accepted: %s alerts; no subscribed chats, nothing queued",
+            "Alertmanager webhook from %s accepted: %s alerts; no eligible chats, nothing queued",
             source_id,
             alert_count,
             extra=context,

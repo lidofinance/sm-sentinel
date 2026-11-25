@@ -25,7 +25,7 @@ async def test_shared_database_namespaces_outbox_and_preserves_other_tables(data
             "another subsystem",
         )
         assert await AlertmanagerOutbox(session).pending_count() == 1
-        assert await session.scalar(text("SELECT version_num FROM alembic_version")) == "0001"
+        assert await session.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
 
 
 @pytest.mark.parametrize("rollback", [True, False])
@@ -215,10 +215,13 @@ async def test_cli_cannot_initialize_database_but_can_upgrade_bound_database(
             "evm", "retained", [("42", 100, "hello")], now=0
         )
     await database.close()
+    await asyncio.to_thread(command.downgrade, config, "0001")
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("0001",)
     await asyncio.to_thread(command.upgrade, config, "head")
     await database.open()
     async with database.session() as session:
-        assert await session.scalar(text("SELECT version_num FROM alembic_version")) == "0001"
+        assert await session.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
         assert await AlertmanagerOutbox(session).pending_count() == 1
         assert (await session.execute(text("SELECT * FROM chat_migrations"))).all() == []
     await database.close()

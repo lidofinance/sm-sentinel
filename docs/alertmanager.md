@@ -154,10 +154,16 @@ publishers have independent receipts. Later identical reminders are allowed; an 
 fingerprint is never treated as a permanent notification ID.
 
 An HTTP `202` acknowledges a committed outbox in `FILESTORAGE_PATH/sentinel.sqlite3`,
-not completed Telegram delivery. A batch for operators nobody follows is also accepted, with
+not completed Telegram delivery. A batch with no eligible recipients is also accepted, with
 nothing queued. The response does not say how many messages were queued, so publishers cannot
-probe subscriptions; the admission log does (`queued_messages`, or `no subscribed chats`), and
+probe subscriptions; the admission log does (`queued_messages`, or `no eligible chats`), and
 each sent or dropped message is logged with its chat and operator.
+
+In a private chat, open `/start` → **Alertmanager alerts** and tap a source to turn its
+alerts off or on across your operator subscriptions. Sources are enabled by default. Each
+change is committed to `FILESTORAGE_PATH/sentinel.sqlite3` before the bot refreshes the menu.
+The bot checks the setting when queuing alerts and again immediately before sending.
+
 Pending messages survive restarts and cancellation;
 subscriptions are rechecked before sending. Sending relies on PTB and the shared
 `AIORateLimiter(max_retries=5)`, which retries `RetryAfter` and can pause all bot sends.
@@ -203,7 +209,7 @@ The existing `/metrics` endpoint also exports these feature metrics:
 | `sentinel_alertmanager_batches_total` | `source_id`, `outcome` | Acknowledged batches: `accepted` or `duplicate` |
 | `sentinel_alertmanager_pending_deliveries` | `source_id` | Persisted messages awaiting completion, including paused sources |
 | `sentinel_alertmanager_oldest_pending_age_seconds` | `source_id` | Age since enqueue of the oldest pending message; zero when empty |
-| `sentinel_alertmanager_deliveries_total` | `source_id`, `outcome` | Outbox outcomes: `sent`, `failed`, `migrated`, or `unsubscribed` |
+| `sentinel_alertmanager_deliveries_total` | `source_id`, `outcome` | Outbox outcomes: `sent`, `failed`, `migrated`, or `unsubscribed` (chat no longer eligible, including source opt-outs) |
 
 Source labels come from authenticated identities; unauthenticated requests use an empty
 `source_id`. Keys, chat IDs, and payload labels are never metric labels. Queue gauges are
@@ -220,9 +226,10 @@ PTB returns, while the existing
 `BotRuntime.database` owns the SQLAlchemy async engine for `sentinel.sqlite3`, SQLite settings,
 and chain/module runtime identity. Startup checks existing database ownership before running
 Alembic. Schema upgrades and initial identity binding share one transaction, including when
-the webhook receiver is disabled. Repositories receive a session and use namespaced tables;
-the Alertmanager outbox is its first consumer with
-`alertmanager_requests` and `alertmanager_deliveries`. A repository that stores Telegram chat IDs
+the webhook receiver is disabled. Repositories receive a session and use namespaced tables.
+Alertmanager uses `alertmanager_requests` and `alertmanager_deliveries` for its outbox, and
+`alertmanager_disabled_sources` for opt-outs keyed by Telegram user ID and source ID.
+A repository that stores Telegram chat IDs
 subclasses `ChatScopedRepository` and is registered with `ChatMigrationService` in bootstrap,
 so chat migrations move its rows in the same transaction as the journal entry.
 Stopping the webhook listener does not close the application database.

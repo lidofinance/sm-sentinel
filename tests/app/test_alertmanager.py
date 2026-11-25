@@ -452,7 +452,7 @@ async def test_logs_distinguish_unfollowed_queued_duplicate_and_sent(receiver, p
     # The delivery worker logs concurrently with the webhook handler.
     webhooks = [record for record in caplog.records if record.name == "sentinel.app.alertmanager"]
     assert [record.getMessage() for record in webhooks] == [
-        "Alertmanager webhook from evm accepted: 1 alerts; no subscribed chats, nothing queued",
+        "Alertmanager webhook from evm accepted: 1 alerts; no eligible chats, nothing queued",
         "Alertmanager webhook from evm accepted: 1 alerts; Messages queued: 2",
         "Alertmanager webhook from evm is a duplicate; nothing queued",
     ]
