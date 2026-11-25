@@ -3,10 +3,13 @@
 from dataclasses import dataclass
 
 from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.app.chat_migration import ChatScopedRepository
 from sentinel.app.database_models import (
     AlertmanagerDeliveryRow,
+    AlertmanagerDisabledSourceRow,
     AlertmanagerRequestRow,
 )
 
@@ -26,6 +29,49 @@ class PendingAlertDelivery:
     node_operator_id: str
     chat_id: int
     message: str
+
+
+class AlertmanagerPreferences:
+    """Opt-outs keyed by Telegram user ID and authenticated source ID."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def disabled_sources(self, user_id: int) -> set[str]:
+        sources = await self._session.scalars(
+            select(AlertmanagerDisabledSourceRow.source_id).where(
+                AlertmanagerDisabledSourceRow.user_id == user_id
+            )
+        )
+        return set(sources)
+
+    async def disabled_recipients(self, source_id: str) -> set[int]:
+        users = await self._session.scalars(
+            select(AlertmanagerDisabledSourceRow.user_id).where(
+                AlertmanagerDisabledSourceRow.source_id == source_id
+            )
+        )
+        return set(users)
+
+    async def is_disabled(self, user_id: int, source_id: str) -> bool:
+        return (
+            await self._session.get(AlertmanagerDisabledSourceRow, (user_id, source_id)) is not None
+        )
+
+    async def set_enabled(self, user_id: int, source_id: str, *, enabled: bool) -> None:
+        if enabled:
+            await self._session.execute(
+                delete(AlertmanagerDisabledSourceRow).where(
+                    AlertmanagerDisabledSourceRow.user_id == user_id,
+                    AlertmanagerDisabledSourceRow.source_id == source_id,
+                )
+            )
+        else:
+            await self._session.execute(
+                sqlite_insert(AlertmanagerDisabledSourceRow)
+                .values(user_id=user_id, source_id=source_id)
+                .on_conflict_do_nothing()
+            )
 
 
 class AlertmanagerOutbox(ChatScopedRepository):

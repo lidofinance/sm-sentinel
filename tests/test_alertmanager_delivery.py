@@ -13,7 +13,9 @@ from sentinel.app.alertmanager_storage import (
     REQUEST_DEDUP_SECONDS,
     AlertmanagerOutbox,
     AlertmanagerOutboxFull,
+    AlertmanagerPreferences,
 )
+from sentinel.app.storage import BotStorage
 from sentinel.services.alertmanager import (
     AlertmanagerDeliveryService,
     AlertmanagerBatchTooLarge,
@@ -70,6 +72,51 @@ async def test_delivery_goes_only_to_each_operators_subscribers(
         (100, False),
         (200, True),
     ]
+
+
+async def test_source_opt_out_applies_at_enqueue_and_delivery_for_one_chat(
+    database, module_adapter_factory, chat_migrations_factory
+):
+    storage = BotStorage({})
+    subscriptions = {100: {"42", "7"}, 200: {"42"}}
+    for chat_id, operator_ids in subscriptions.items():
+        storage.users.add(chat_id)
+        for operator_id in operator_ids:
+            storage.node_operator_chats.subscribe(operator_id, chat_id)
+    sender = AsyncMock()
+    service = AlertmanagerDeliveryService(
+        chat_migrations=chat_migrations_factory(database),
+        chain_id=1,
+        module_adapter=module_adapter_factory(),
+        metrics=AlertmanagerMetrics(CollectorRegistry()),
+        database=database,
+        source_ids=frozenset({"evm", "other"}),
+        resolve_chats=lambda operator_id: storage.resolve_target_chats({operator_id}),
+        send_message=sender,
+    )
+    alerts = (make_alert(), make_alert("7", "Other operator"))
+    assert (await service.submit("evm", "before-opt-out", alerts)).queued_messages == 3
+
+    async with database.transaction() as session:
+        await AlertmanagerPreferences(session).set_enabled(100, "evm", enabled=False)
+    assert (await service.submit("evm", "after-opt-out", alerts)).queued_messages == 1
+    assert (await service.submit("other", "other-source", alerts)).queued_messages == 3
+    while await service.deliver_one():
+        pass
+
+    assert [(call.args[0], "evm" in call.args[1]) for call in sender.await_args_list] == [
+        (200, True),
+        (200, True),
+        (100, False),
+        (200, False),
+        (100, False),
+    ]
+    assert storage.resolve_target_chats({"7"}) == {100}
+    assert await pending_count(database) == 0
+
+    async with database.transaction() as session:
+        await AlertmanagerPreferences(session).set_enabled(100, "evm", enabled=True)
+    assert (await service.submit("evm", "after-opt-in", alerts)).queued_messages == 3
 
 
 async def test_completed_chats_are_not_repeated_after_restart(
@@ -209,7 +256,7 @@ async def test_unsubscribe_is_respected_for_already_queued_deliveries(
     sender.assert_not_awaited()
     assert await pending_count(database) == 0
     assert caplog.messages == [
-        "Alertmanager notification dropped: chat 100 no longer follows node operator 42; "
+        "Alertmanager notification dropped: chat 100 is no longer eligible for node operator 42; "
         "source: evm"
     ]
 

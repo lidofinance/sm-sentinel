@@ -1,23 +1,28 @@
+from hashlib import blake2s
 from typing import TYPE_CHECKING
 
-from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
+from sentinel.app.alertmanager_storage import AlertmanagerPreferences
 from sentinel.handlers.state import Callback, States
 from sentinel.handlers.tracking import add_user_if_required
 from sentinel.handlers.utils import is_admin, reply_with_markup
 from sentinel.modules.base import NodeOperatorOption
+from sentinel.modules.texts import BotTexts
 
 if TYPE_CHECKING:
     from sentinel.app.context import BotContext
 
 
-OPERATOR_BUTTON_PAGE_SIZE = 8
+BUTTON_PAGE_SIZE = 8
 FOLLOW_OPERATOR_PREFIX = "follow_no:"
 FOLLOW_OPERATOR_PAGE_PREFIX = "follow_no_page:"
 UNFOLLOW_OPERATOR_PREFIX = "unfollow_no:"
 UNFOLLOW_OPERATOR_PAGE_PREFIX = "unfollow_no_page:"
+ALERTMANAGER_SOURCE_PREFIX = "alertmanager_set:"
+ALERTMANAGER_PAGE_PREFIX = "alertmanager_page:"
 
 
 def _is_message_not_modified(exc: BadRequest) -> bool:
@@ -79,28 +84,17 @@ def _operator_button_text(label: str) -> str:
     return f"{label[:55]}..."
 
 
-def _build_operator_keyboard(
+def _paginate_buttons(
+    buttons: list[InlineKeyboardButton],
     *,
-    texts,
-    options: tuple[NodeOperatorOption, ...],
-    operator_prefix: str,
+    back_text: str,
     page_prefix: str,
     page: int = 0,
 ) -> InlineKeyboardMarkup:
-    page_count = max(1, (len(options) + OPERATOR_BUTTON_PAGE_SIZE - 1) // OPERATOR_BUTTON_PAGE_SIZE)
+    page_count = max(1, (len(buttons) + BUTTON_PAGE_SIZE - 1) // BUTTON_PAGE_SIZE)
     page = min(max(page, 0), page_count - 1)
-    page_start = page * OPERATOR_BUTTON_PAGE_SIZE
-    page_options = options[page_start : page_start + OPERATOR_BUTTON_PAGE_SIZE]
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                _operator_button_text(option.label),
-                callback_data=f"{operator_prefix}{option.id}",
-            )
-        ]
-        for option in page_options
-    ]
+    page_start = page * BUTTON_PAGE_SIZE
+    keyboard = [[button] for button in buttons[page_start : page_start + BUTTON_PAGE_SIZE]]
     if page_count > 1:
         navigation = []
         if page > 0:
@@ -112,8 +106,27 @@ def _build_operator_keyboard(
                 InlineKeyboardButton("Next", callback_data=f"{page_prefix}{page + 1}")
             )
         keyboard.append(navigation)
-    keyboard.append([InlineKeyboardButton(texts.BUTTON_BACK, callback_data=Callback.BACK.value)])
+    keyboard.append([InlineKeyboardButton(back_text, callback_data=Callback.BACK.value)])
     return InlineKeyboardMarkup(keyboard)
+
+
+def _build_operator_keyboard(
+    *,
+    texts: BotTexts,
+    options: tuple[NodeOperatorOption, ...],
+    operator_prefix: str,
+    page_prefix: str,
+    page: int = 0,
+) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(
+            _operator_button_text(option.label), callback_data=f"{operator_prefix}{option.id}"
+        )
+        for option in options
+    ]
+    return _paginate_buttons(
+        buttons, back_text=texts.BUTTON_BACK, page_prefix=page_prefix, page=page
+    )
 
 
 async def _format_following(context: "BotContext", node_operator_ids: set[str]) -> str:
@@ -212,13 +225,9 @@ async def _valid_node_operator_ids(
     return valid_ids, invalid_ids
 
 
-async def start(update: Update, context: "BotContext") -> States:
-    await add_user_if_required(update, context)
-    effective_user = update.effective_user
-    effective_chat = update.effective_chat
-    if effective_user is None or effective_chat is None:
-        return States.WELCOME
-
+async def _build_welcome(
+    context: "BotContext", user_id: int, *, private_chat: bool
+) -> tuple[str, InlineKeyboardMarkup]:
     texts = context.runtime.module_adapter.texts
     chat_storage = context.chat_storage()
     keyboard = [
@@ -235,21 +244,40 @@ async def start(update: Update, context: "BotContext") -> States:
             ),
         ],
     ]
-    if is_admin(effective_user.id, context):
+    if private_chat and context.runtime.config.alertmanager_webhook_sources:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "Alertmanager alerts", callback_data=Callback.ALERTMANAGER_SETTINGS.value
+                )
+            ]
+        )
+    if is_admin(user_id, context):
         keyboard.append(
             [InlineKeyboardButton(texts.START_BUTTON_ADMIN, callback_data=Callback.ADMIN.value)]
         )
 
     text = texts.WELCOME_TEXT
-    node_operator_ids = sorted(chat_storage.node_operators.ids())
+    node_operator_ids = chat_storage.node_operators.ids()
     if node_operator_ids:
         text += texts.FOLLOW_NODE_OPERATOR_FOLLOWING.format(
-            await _format_following(context, set(node_operator_ids))
+            await _format_following(context, node_operator_ids)
         )
+    return text, InlineKeyboardMarkup(keyboard)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+
+async def start(update: Update, context: "BotContext") -> States:
+    await add_user_if_required(update, context)
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None:
+        return States.WELCOME
+
+    text, reply_markup = await _build_welcome(
+        context, user.id, private_chat=chat.type == Chat.PRIVATE
+    )
     await context.bot.send_message(
-        chat_id=effective_chat.id,
+        chat_id=chat.id,
         text=text,
         reply_markup=reply_markup,
     )
@@ -258,45 +286,101 @@ async def start(update: Update, context: "BotContext") -> States:
 
 async def start_over(update: Update, context: "BotContext") -> States:
     query = update.callback_query
-    effective_user = update.effective_user
-    if query is None or effective_user is None:
+    user = update.effective_user
+    chat = update.effective_chat
+    if query is None or user is None or chat is None:
         return States.WELCOME
 
-    texts = context.runtime.module_adapter.texts
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                texts.START_BUTTON_FOLLOW, callback_data=Callback.FOLLOW_TO_NODE_OPERATOR.value
-            ),
-            InlineKeyboardButton(
-                texts.START_BUTTON_UNFOLLOW,
-                callback_data=Callback.UNFOLLOW_FROM_NODE_OPERATOR.value,
-            ),
-            InlineKeyboardButton(
-                texts.START_BUTTON_EVENTS, callback_data=Callback.FOLLOWED_EVENTS.value
-            ),
-        ],
-    ]
-    if is_admin(effective_user.id, context):
-        keyboard.append(
-            [InlineKeyboardButton(texts.START_BUTTON_ADMIN, callback_data=Callback.ADMIN.value)]
-        )
-
-    text = texts.WELCOME_TEXT
-    chat_storage = context.chat_storage()
-    node_operator_ids = sorted(chat_storage.node_operators.ids())
-    if node_operator_ids:
-        text += texts.FOLLOW_NODE_OPERATOR_FOLLOWING.format(
-            await _format_following(context, set(node_operator_ids))
-        )
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    text, reply_markup = await _build_welcome(
+        context, user.id, private_chat=chat.type == Chat.PRIVATE
+    )
     await _edit_message_text(
         query,
         text=text,
         reply_markup=reply_markup,
     )
     return States.WELCOME
+
+
+def _alertmanager_source_ids(context: "BotContext") -> list[str]:
+    return sorted(
+        source.source_id for source in context.runtime.config.alertmanager_webhook_sources
+    )
+
+
+def _alertmanager_source_token(source_id: str) -> str:
+    # Source IDs can already fill Telegram's 64-byte callback data limit.
+    return blake2s(source_id.encode(), digest_size=16).hexdigest()
+
+
+async def _render_alertmanager_settings(
+    query: CallbackQuery, context: "BotContext", user_id: int, source_ids: list[str], page: int
+) -> States:
+    async with context.runtime.database.session() as session:
+        disabled_sources = await AlertmanagerPreferences(session).disabled_sources(user_id)
+    buttons = []
+    for source_id in source_ids:
+        enabled = source_id not in disabled_sources
+        buttons.append(
+            InlineKeyboardButton(
+                f"{'On' if enabled else 'Off'} · {source_id}",
+                callback_data=(
+                    f"{ALERTMANAGER_SOURCE_PREFIX}{_alertmanager_source_token(source_id)}:"
+                    f"{int(not enabled)}"
+                ),
+            )
+        )
+    markup = _paginate_buttons(
+        buttons,
+        back_text=context.runtime.module_adapter.texts.BUTTON_BACK,
+        page_prefix=ALERTMANAGER_PAGE_PREFIX,
+        page=page,
+    )
+    text = (
+        "Tap a source to turn its alerts on or off for all your subscriptions."
+        if buttons
+        else "No Alertmanager sources are configured."
+    )
+    await _edit_message_text(query, text=text, reply_markup=markup)
+    return States.ALERTMANAGER_SETTINGS
+
+
+async def alertmanager_settings(update: Update, context: "BotContext") -> States | None:
+    query = update.callback_query
+    chat = update.effective_chat
+    if query is None or query.data is None or chat is None or chat.type != Chat.PRIVATE:
+        return None
+    await query.answer()
+    page = (
+        0
+        if query.data == Callback.ALERTMANAGER_SETTINGS.value
+        else int(query.data.removeprefix(ALERTMANAGER_PAGE_PREFIX))
+    )
+    return await _render_alertmanager_settings(
+        query, context, chat.id, _alertmanager_source_ids(context), page
+    )
+
+
+async def set_alertmanager_alerts(update: Update, context: "BotContext") -> States | None:
+    query = update.callback_query
+    chat = update.effective_chat
+    if query is None or query.data is None or chat is None or chat.type != Chat.PRIVATE:
+        return None
+
+    token, enabled = query.data.removeprefix(ALERTMANAGER_SOURCE_PREFIX).split(":")
+    source_ids = _alertmanager_source_ids(context)
+    page = 0
+    for index, source_id in enumerate(source_ids):
+        if _alertmanager_source_token(source_id) == token:
+            async with context.runtime.chat_migrations.state_lock:
+                async with context.runtime.database.transaction() as session:
+                    await AlertmanagerPreferences(session).set_enabled(
+                        chat.id, source_id, enabled=enabled == "1"
+                    )
+            page = index // BUTTON_PAGE_SIZE
+            break
+    await query.answer()
+    return await _render_alertmanager_settings(query, context, chat.id, source_ids, page)
 
 
 async def follow_node_operator(update: Update, context: "BotContext") -> States:

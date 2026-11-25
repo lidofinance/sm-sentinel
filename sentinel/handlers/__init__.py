@@ -45,6 +45,10 @@ def build_conversation_handler() -> ConversationHandler:
                     pattern="^" + Callback.FOLLOWED_EVENTS.value + "$",
                 ),
                 CallbackQueryHandler(
+                    start.alertmanager_settings,
+                    pattern="^" + Callback.ALERTMANAGER_SETTINGS.value + "$",
+                ),
+                CallbackQueryHandler(
                     admin_menu,
                     pattern="^" + Callback.ADMIN.value + "$",
                 ),
@@ -74,6 +78,17 @@ def build_conversation_handler() -> ConversationHandler:
                 MessageHandler(text_without_commands, start.unfollow_node_operator_message),
             ],
             States.FOLLOWED_EVENTS: [
+                CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
+            ],
+            States.ALERTMANAGER_SETTINGS: [
+                CallbackQueryHandler(
+                    start.alertmanager_settings,
+                    pattern="^" + start.ALERTMANAGER_PAGE_PREFIX + r"[0-9]+$",
+                ),
+                CallbackQueryHandler(
+                    start.set_alertmanager_alerts,
+                    pattern="^" + start.ALERTMANAGER_SOURCE_PREFIX + r"[0-9a-f]{32}:[01]$",
+                ),
                 CallbackQueryHandler(start.start_over, pattern="^" + Callback.BACK.value + "$"),
             ],
             States.ADMIN: [

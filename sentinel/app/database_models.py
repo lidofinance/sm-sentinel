@@ -26,6 +26,14 @@ class ChatMigrationRow(Base):
     new_chat_id: Mapped[int]
 
 
+class AlertmanagerDisabledSourceRow(Base):
+    __tablename__ = "alertmanager_disabled_sources"
+    __table_args__ = (Index("alertmanager_disabled_sources_source", "source_id", "user_id"),)
+
+    user_id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[str] = mapped_column(primary_key=True)
+
+
 class AlertmanagerRequestRow(Base):
     __tablename__ = "alertmanager_requests"
 
