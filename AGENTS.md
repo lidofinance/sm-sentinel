@@ -63,6 +63,14 @@ This document captures practical conventions for working with this repo using ag
 - Register new handlers in `handlers/__init__.py` so they are picked up during `register_handlers(runtime)`.
 - Prefer pure handler helpers; persist side-effects with the storage helpers in `app.storage`.
 
+## Data Models
+- Use Pydantic for external data contracts that need structured parsing and validation. Make coercion and unknown-field handling explicit; do not expose raw validation inputs in HTTP errors or logs.
+- Use dataclasses for internal values, domain behavior, plans, and snapshots. Prefer frozen dataclasses for values; remember that freezing does not make nested containers immutable.
+- A validated Pydantic model may be used directly by a service. Convert to a dataclass only when meaning, shape, or lifecycle changes, as with an Alertmanager webhook becoming operator alerts; do not maintain identical models solely to cross a layer.
+- Keep SQLAlchemy models in the persistence boundary when introducing ORM storage. Return explicit values or snapshots when callers outlive a transaction; avoid leaking lazy-loaded ORM state into delivery code.
+- Keep format validation with the input schema, domain invariants with the domain object, runtime-dependent checks with the operation, and uniqueness/atomicity with the database transaction.
+- Do not add Pydantic or ORM twins for existing dataclasses by default. Configuration and persisted-format migrations must preserve their existing parsing, recovery, and secret-handling contracts.
+
 ## Chain Reads & Versioning
 - Always read contract state at the event’s block: pass `block_identifier=event.block`.
 - Where pre-state is needed, use `event.block - 1` intentionally and document it in code.

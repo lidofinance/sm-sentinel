@@ -1,10 +1,40 @@
 import dataclasses
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from eth_typing import ChecksumAddress
 from eth_utils import to_checksum_address
 from hexbytes import HexBytes
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_serializer
+
+
+class EventRecord(BaseModel):
+    """Persisted event shape; Web3 runtime events remain ordinary dataclasses."""
+
+    model_config = ConfigDict(strict=True, arbitrary_types_allowed=True, extra="ignore")
+
+    event: str
+    args: dict[str, Any]
+    block: int = Field(strict=False)
+    tx: Annotated[HexBytes, BeforeValidator(HexBytes)]
+    address: Annotated[ChecksumAddress, AfterValidator(to_checksum_address)]
+    log_index: int = Field(strict=False)
+    transaction_index: int = Field(strict=False)
+
+    @field_serializer("tx")
+    def serialize_tx(self, value: HexBytes) -> str:
+        return value.to_0x_hex()
+
+    def to_event(self) -> "Event":
+        return Event(
+            event=self.event,
+            args=self.args,
+            block=self.block,
+            tx=self.tx,
+            address=self.address,
+            log_index=self.log_index,
+            transaction_index=self.transaction_index,
+        )
 
 
 @dataclasses.dataclass
@@ -47,15 +77,7 @@ class Event:
 
     @classmethod
     def from_dict(cls, record: dict[str, Any]) -> "Event":
-        return cls(
-            event=str(record["event"]),
-            args=dict(record["args"]),
-            block=int(record["block"]),
-            tx=HexBytes(record["tx"]),
-            address=to_checksum_address(record["address"]),
-            log_index=int(record["log_index"]),
-            transaction_index=int(record["transaction_index"]),
-        )
+        return EventRecord.model_validate(record).to_event()
 
 
 @dataclasses.dataclass

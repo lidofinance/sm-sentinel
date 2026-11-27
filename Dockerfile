@@ -38,6 +38,7 @@ COPY --from=builder --chown=65534:65534 /app/sentinel /app/sentinel
 COPY --from=builder --chown=65534:65534 /app/abi /app/abi
 COPY --from=builder --chown=65534:65534 /app/scripts/healthcheck.py /app/scripts/healthcheck.py
 COPY --from=builder --chown=65534:65534 /app/build-info.json /app/build-info.json
+COPY --chown=65534:65534 alembic.ini /app/alembic.ini
 
 RUN mkdir -p /app/.storage && chown 65534:65534 /app /app/.storage
 

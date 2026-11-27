@@ -114,42 +114,42 @@ async def stop_anvil(instance: AnvilInstance) -> None:
 
 
 async def build_subscription(ws_url: str, http_url: str) -> "EventReplayHarness":
-    from sentinel.config import get_config, set_config
-    from sentinel.app.module_adapter import build_module_adapter_from_config
+    from sentinel.config import get_config
+    from sentinel.app.module_adapter import build_module_adapter_from_addresses
     from sentinel.chain import SharedChainConnection
 
     persistent_w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     backfill_w3 = AsyncWeb3(AsyncHTTPProvider(http_url))
     w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     cfg = get_config()
+    # Preserve the current-deployment fallback for historical Curated fork blocks.
+    current_addresses = await discover_contract_addresses_from_url(
+        cfg.web3_socket_providers[0], cfg.module_address
+    )
     try:
-        addresses = await discover_contract_addresses_from_url(
-            http_url, cfg.contract_addresses.module
-        )
+        addresses = await discover_contract_addresses_from_url(http_url, cfg.module_address)
     except Exception:
-        if cfg.contract_addresses.module_type != ModuleType.CURATED:
+        if current_addresses.module_type != ModuleType.CURATED:
             raise
-        addresses = cfg.contract_addresses
-    cfg = replace(cfg, contract_addresses=addresses)
-    set_config(cfg)
-    module_adapter = build_module_adapter_from_config(cfg, w3, SharedChainConnection(w3))
+        addresses = current_addresses
+    module_adapter = build_module_adapter_from_addresses(
+        addresses, w3, cfg.module_ui_url, SharedChainConnection(w3)
+    )
     return EventReplayHarness(persistent_w3, w3, backfill_w3, module_adapter)
 
 
 async def build_module_supervisor(ws_url: str, http_url: str) -> "ModuleSupervisorHarness":
-    from sentinel.config import get_config, set_config
-    from sentinel.app.module_adapter import build_module_adapter_from_config
+    from sentinel.config import get_config
+    from sentinel.app.module_adapter import build_module_adapter_from_addresses
     from sentinel.chain import SharedChainConnection
 
     persistent_w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     backfill_w3 = AsyncWeb3(AsyncHTTPProvider(http_url))
     w3 = AsyncWeb3(WebSocketProvider(ws_url, max_connection_retries=-1))
     cfg = get_config()
-    addresses = await discover_contract_addresses_from_url(http_url, cfg.contract_addresses.module)
-    cfg = replace(cfg, contract_addresses=addresses)
-    set_config(cfg)
+    addresses = await discover_contract_addresses_from_url(http_url, cfg.module_address)
     chain = SharedChainConnection(w3)
-    module_adapter = build_module_adapter_from_config(cfg, w3, chain)
+    module_adapter = build_module_adapter_from_addresses(addresses, w3, cfg.module_ui_url, chain)
     return ModuleSupervisorHarness(persistent_w3, w3, backfill_w3, cfg, chain, module_adapter)
 
 

@@ -1,17 +1,41 @@
 """Shared pytest configuration for the test suite."""
 
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 from dotenv import load_dotenv
 import pytest
 
-from sentinel.app.contracts import CommunityContractAddresses
+from sentinel.app.contracts import CommunityContractAddresses, ContractABIs
+from sentinel.chain import SharedChainConnection
+from sentinel.modules.base import BaseModuleAdapter
+from sentinel.app.database import SentinelDatabase
+from sentinel.app.storage import RuntimeIdentity
 from sentinel.module_types import ModuleType
 
 # Load local environment variables before tests run.
 env_file = Path(".env")
 if env_file.exists():
     load_dotenv(env_file, override=False)
+
+
+@pytest.fixture
+async def database_factory(tmp_path):
+    databases = []
+
+    async def create(path=None, identity=None):
+        database = SentinelDatabase(
+            path or tmp_path / "sentinel.sqlite3",
+            identity or RuntimeIdentity(1, "0x1234", ModuleType.COMMUNITY),
+        )
+        databases.append(database)
+        await database.open()
+        return database
+
+    yield create
+    for database in databases:
+        await database.close()
 
 
 def pytest_configure(config):
@@ -65,3 +89,37 @@ def clear_alru_caches():
     yield
     for cached_method in cached_methods:
         _reset(cached_method)
+
+
+@pytest.fixture
+def module_adapter_factory(fake_contract_addresses):
+    def create(staking_module_id=3):
+        return BaseModuleAdapter(
+            addresses=replace(fake_contract_addresses(), staking_module_id=staking_module_id),
+            contracts=MagicMock(),
+            module_ui_url=None,
+            contract_abis=MagicMock(spec=ContractABIs),
+            chain=AsyncMock(spec=SharedChainConnection),
+        )
+
+    return create
+
+
+@pytest.fixture
+def chat_migrations_factory():
+    from telegram.ext import ApplicationBuilder
+    from sentinel.app.alertmanager_storage import AlertmanagerOutbox
+    from sentinel.app.application import SentinelApplication
+    from sentinel.app.chat_migration import ChatMigrationService
+
+    def create(database, application=None):
+        if application is None:
+            application = (
+                ApplicationBuilder()
+                .application_class(SentinelApplication)
+                .token("123:TEST")
+                .build()
+            )
+        return ChatMigrationService(application, database, repositories=(AlertmanagerOutbox,))
+
+    return create

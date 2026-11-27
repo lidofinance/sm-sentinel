@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 import pytest
 
 from scripts import healthcheck
@@ -20,7 +22,7 @@ def test_check_health_uses_configured_port(monkeypatch):
 
     def fake_urlopen(url, *, timeout):
         calls.append((url, timeout))
-        return _Response(200)
+        return _Response(HTTPStatus.OK)
 
     monkeypatch.setattr(healthcheck, "urlopen", fake_urlopen)
 
@@ -30,14 +32,17 @@ def test_check_health_uses_configured_port(monkeypatch):
 
 
 def test_check_health_rejects_non_success_response(monkeypatch):
-    monkeypatch.setattr(healthcheck, "urlopen", lambda *args, **kwargs: _Response(503))
+    monkeypatch.setattr(
+        healthcheck, "urlopen", lambda *args, **kwargs: _Response(HTTPStatus.SERVICE_UNAVAILABLE)
+    )
 
     with pytest.raises(RuntimeError, match="HTTP 503"):
         healthcheck.check_health()
 
 
-def test_check_health_rejects_invalid_port(monkeypatch):
-    monkeypatch.setenv("HEALTHCHECK_PORT", "not-a-port")
+@pytest.mark.parametrize("value", ["", "not-a-port"])
+def test_check_health_rejects_invalid_port(monkeypatch, value):
+    monkeypatch.setenv("HEALTHCHECK_PORT", value)
 
     with pytest.raises(ValueError, match="must be an integer"):
         healthcheck.check_health()

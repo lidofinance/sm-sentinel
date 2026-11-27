@@ -376,6 +376,45 @@ class CuratedEventMessages(BaseModule):
 
         return NotificationPlan.per_chat(entries_by_operator, render)
 
+    @register_event("TopUpAllocationEnabled")
+    async def top_up_allocation_enabled(self, event: EventNotification):
+        return await self._top_up_allocation_changed(event)
+
+    @register_event("TopUpAllocationDisabled")
+    async def top_up_allocation_disabled(self, event: EventNotification):
+        return await self._top_up_allocation_changed(event)
+
+    async def _top_up_allocation_changed(self, event: EventNotification):
+        template = self._require_message_template(event.event)
+        node_operator_ids = sorted(
+            {int(source_event.args["nodeOperatorId"]) for source_event in event.source_events}
+        )
+        operator_labels = {
+            node_operator_id: await self._node_operator_label(node_operator_id, event.block)
+            for node_operator_id in node_operator_ids
+        }
+        footer = await self._source_transactions_footer(event)
+
+        def render(chat_operator_ids: frozenset[str]) -> tuple[str, ...]:
+            labels = [
+                operator_labels[node_operator_id]
+                for node_operator_id in node_operator_ids
+                if str(node_operator_id) in chat_operator_ids
+            ]
+            if not labels:
+                return ()
+            return (f"{template(labels)}{footer}",)
+
+        return NotificationPlan.per_chat(node_operator_ids, render)
+
+    async def _source_transactions_footer(self, event: EventNotification) -> str:
+        """Transaction link when all source events share one tx, otherwise the block range."""
+        if len({source_event.tx for source_event in event.source_events}) == 1:
+            return event_transaction_footer_tx_only(
+                self.transaction_link(event.primary_event)
+            ).as_markdown()
+        return await self.block_range_footer(event)
+
     @register_event("OperatorGroupCreated")
     async def operator_group_created(self, event: EventNotification):
         template = self._require_message_template(event.event)

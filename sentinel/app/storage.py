@@ -8,9 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Set
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from telegram.ext import BasePersistence, PicklePersistence
 
-from sentinel.models import Event
+from sentinel.models import Event, EventRecord
 from sentinel.module_types import ModuleType
 from sentinel.modules.aggregation import AggregationKey, AggregationWindow
 
@@ -25,6 +26,20 @@ def create_persistence(storage_path: Path) -> BasePersistence:
 
 class RuntimeIdentityMismatch(RuntimeError):
     """Raised when persisted state belongs to another runtime."""
+
+
+class RuntimeIdentityRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+
+    schema_version: int = Field(ge=1, le=1)
+    chain_id: int = Field(gt=0)
+    module_address: str = Field(min_length=1)
+    module_type: ModuleType
+
+    @field_validator("module_type", mode="before")
+    @classmethod
+    def parse_module_type(cls, value: str) -> ModuleType:
+        return ModuleType(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,35 +86,14 @@ class RuntimeIdentity:
     @classmethod
     def from_dict(cls, value: Any) -> "RuntimeIdentity":
         try:
-            schema_version = value["schema_version"]
-            chain_id = value["chain_id"]
-            module_address = value["module_address"]
-            module_type = value["module_type"]
-        except (KeyError, TypeError) as exc:
-            raise RuntimeError("Persisted runtime identity is malformed") from exc
-
-        if (
-            isinstance(schema_version, bool)
-            or not isinstance(schema_version, int)
-            or schema_version != cls.SCHEMA_VERSION
-            or isinstance(chain_id, bool)
-            or not isinstance(chain_id, int)
-            or chain_id <= 0
-            or not isinstance(module_address, str)
-            or not module_address
-            or not isinstance(module_type, str)
-        ):
-            raise RuntimeError("Persisted runtime identity is malformed")
-
-        try:
-            parsed_module_type = ModuleType(module_type)
-        except ValueError as exc:
+            record = RuntimeIdentityRecord.model_validate(value)
+        except ValidationError as exc:
             raise RuntimeError("Persisted runtime identity is malformed") from exc
 
         return cls(
-            chain_id=chain_id,
-            module_address=module_address,
-            module_type=parsed_module_type,
+            chain_id=record.chain_id,
+            module_address=record.module_address,
+            module_type=record.module_type,
         )
 
 
@@ -323,8 +317,17 @@ class AggregationWindowStore:
         self._bot_data[self.KEY] = self._normalise_windows(self._bot_data.get(self.KEY))
 
     def upsert_pending(self, window: AggregationWindow) -> None:
-        record = AggregationWindowRecord(window=window)
-        self._records[record.key] = record.to_dict()
+        self._records[AggregationWindowRecord.key_for(window)] = {
+            "group": window.group,
+            "aggregation_key": {
+                "kind": window.aggregation_key.kind,
+                "value": window.aggregation_key.value,
+            },
+            "start_block": window.start_block,
+            "end_block": window.end_block,
+            "event_names": sorted(window.event_names),
+            "events": [event.to_dict() for event in window.events],
+        }
 
     def discard(self, window: AggregationWindow) -> None:
         self._records.pop(AggregationWindowRecord.key_for(window), None)
@@ -339,12 +342,13 @@ class AggregationWindowStore:
         block: int,
     ) -> AggregationWindow | None:
         for record in self._records_from(self._records):
+            window = record.window
             if (
-                record.window.group == group
-                and record.window.aggregation_key == aggregation_key
-                and record.window.contains(block)
+                window.group == group
+                and window.aggregation_key == aggregation_key
+                and window.contains(block)
             ):
-                return record.window
+                return window
         return None
 
     @classmethod
@@ -374,7 +378,7 @@ class AggregationWindowStore:
         parsed_records: list[AggregationWindowRecord] = []
         for record in raw_records.values():
             try:
-                parsed_record = AggregationWindowRecord.from_dict(record)
+                parsed_record = AggregationWindowRecord.model_validate(record)
             except (KeyError, TypeError, ValueError):
                 logger.warning("Skipping malformed aggregation window record: %r", record)
                 continue
@@ -391,43 +395,55 @@ class AggregationWindowStore:
         return {record.key: record.to_dict() for record in cls._records_from(value)}
 
 
-@dataclass(frozen=True, slots=True)
-class AggregationWindowRecord:
-    window: AggregationWindow
+class AggregationKeyRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
 
-    @classmethod
-    def from_dict(cls, record: dict[str, Any]) -> "AggregationWindowRecord":
-        raw_key = record["aggregation_key"]
-        return cls(
-            window=AggregationWindow(
-                group=str(record["group"]),
-                aggregation_key=AggregationKey(
-                    kind=str(raw_key["kind"]),
-                    value=str(raw_key["value"]),
-                ),
-                start_block=int(record["start_block"]),
-                end_block=int(record["end_block"]),
-                event_names=frozenset(str(name) for name in record["event_names"]),
-                events=tuple(Event.from_dict(event) for event in record["events"]),
-            )
+    kind: str
+    value: str
+
+
+class AggregationWindowRecord(BaseModel):
+    """Stored representation, distinct from the immutable aggregation window."""
+
+    model_config = ConfigDict(strict=True, extra="ignore")
+
+    group: str
+    aggregation_key: AggregationKeyRecord
+    start_block: int = Field(strict=False)
+    end_block: int = Field(strict=False)
+    event_names: list[str]
+    events: list[EventRecord]
+
+    @property
+    def window(self) -> AggregationWindow:
+        return AggregationWindow(
+            group=self.group,
+            aggregation_key=AggregationKey(
+                kind=self.aggregation_key.kind, value=self.aggregation_key.value
+            ),
+            start_block=self.start_block,
+            end_block=self.end_block,
+            event_names=frozenset(self.event_names),
+            events=tuple(event.to_event() for event in self.events),
         )
 
     @property
     def key(self) -> str:
-        return self.key_for(self.window)
+        return json.dumps(
+            [
+                self.group,
+                self.aggregation_key.kind,
+                self.aggregation_key.value,
+                self.start_block,
+                self.end_block,
+            ],
+            separators=(",", ":"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "group": self.window.group,
-            "aggregation_key": {
-                "kind": self.window.aggregation_key.kind,
-                "value": self.window.aggregation_key.value,
-            },
-            "start_block": int(self.window.start_block),
-            "end_block": int(self.window.end_block),
-            "event_names": sorted(self.window.event_names),
-            "events": [event.to_dict() for event in self.window.events],
-        }
+        record = self.model_dump()
+        record["event_names"] = sorted(set(self.event_names))
+        return record
 
     @staticmethod
     def key_for(window: AggregationWindow) -> str:

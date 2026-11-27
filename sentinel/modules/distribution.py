@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -34,7 +36,7 @@ async def default_distribution_log_fetcher(log_cid: str):
         middlewares=(HttpMetricsMiddleware(DEFAULT_METRICS.http),),
     ) as session:
         async with session.get(ipfs_url) as response:
-            if response.status != 200:
+            if response.status != HTTPStatus.OK:
                 raise aiohttp.ClientError(f"HTTP {response.status} when fetching {ipfs_url}")
             return await response.json()
 

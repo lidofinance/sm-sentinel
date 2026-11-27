@@ -16,7 +16,7 @@ from sentinel.app.contracts import CommunityContractAddresses
 from sentinel.app.health import HealthState
 from sentinel.app.storage import BotStorage
 from sentinel.chain import SharedChainConnection
-from sentinel.config import Config, clear_config, set_config
+from sentinel.config import Config, ExplorerLinks, clear_config, set_config
 from sentinel.module_types import ModuleType
 from sentinel.modules.base import EventSource
 from sentinel.rpc_provider import (
@@ -133,8 +133,8 @@ def _rpc_handler(
     return handler
 
 
-def _config(provider_urls: tuple[str, ...]) -> Config:
-    addresses = CommunityContractAddresses(
+def _addresses() -> CommunityContractAddresses:
+    return CommunityContractAddresses(
         module="0x0000000000000000000000000000000000000001",
         accounting="0x0000000000000000000000000000000000000002",
         parameters_registry="0x0000000000000000000000000000000000000003",
@@ -146,15 +146,17 @@ def _config(provider_urls: tuple[str, ...]) -> Config:
         staking_module_id=1,
         module_type=ModuleType.COMMUNITY,
     )
+
+
+def _config(provider_urls: tuple[str, ...]) -> Config:
     return Config(
         filestorage_path=".storage",
         token="token",
         web3_socket_providers=provider_urls,
         healthcheck_host="127.0.0.1",
         healthcheck_port=8080,
-        contract_addresses=addresses,
-        etherscan_url=None,
-        beaconchain_url=None,
+        module_address=_addresses().module,
+        explorers=ExplorerLinks(None, None),
         module_ui_url=None,
         block_batch_size=10_000,
         process_blocks_requests_per_second=None,
@@ -684,7 +686,7 @@ async def test_supervisor_replays_blocks_mined_during_primary_outage(
         config=cfg,
         chain=chain,
         health=health,
-        module_adapter=_BlockOnlyAdapter(cfg.contract_addresses),
+        module_adapter=_BlockOnlyAdapter(_addresses()),
         storage=storage,
         emit_notification=_Sink().emit,
         backfill_w3=backfill_w3,
